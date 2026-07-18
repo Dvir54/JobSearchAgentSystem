@@ -1,0 +1,34 @@
+
+A defense tech company is looking for a
+Senior Fullstack Developer
+to join a dynamic development team working on complex systems in a private cloud environment. The role includes full ownership of the development lifecycle — from architecture design, through Front and Back development, to deployment in a production environment. The position is located in Tel Aviv, HaKirya, within an Air Force unit.
+Requirements:
+
+- At least 5 years of experience
+- Familiarity with Next.js
+- Strong knowledge of relational database management — PostgreSQL
+- Experience in designing and implementing complex system architectures
+- Ability to read code and conduct quality Code Reviews
+- Use of AI development tools — Claude Code and similar
+- Backend service development — TypeScript
+- Writing Dockerfiles and building Docker Images
+- Working with S3 / object storage
+- Working with Git and branch management following Semver conventions
+- Familiarity with the military system, particularly the Air Force — an advantage
+- Graduates of the Ofek unit — an advantage
+Technical advantages:
+
+- Experience working on projects with multiple simultaneously available environments (development, integration, production)
+- Familiarity with message queues — RabbitMQ / Kafka
+- Experience in Backend service development — Python
+- Experience with FastAPI
+- Experience with Express
+- Experience with OpenShift (configuration, troubleshooting)
+- Familiarity with the MCP (Model Context Protocol)
+- Experience with permission management systems (RBAC, ABAC, etc.)
+- Experience with data synchronization and connectivity systems between data repositories
+- Experience with Elasticsearch
+- Experience with Matomo
+- Familiarity with neverthrow (functional error handling in TypeScript)
+- Familiarity with CI/CD processes (particularly Woodpecker/ArgoCD)
+Full-time position in Or Yehuda

@@ -1,0 +1,14 @@
+inManage, a software development company, specializing in sophisticated e-commerce solutions, is looking for a motivated, talented and skillful Junior PHP Developer to join our growing team.Among our customers are huge brands such as McDonald's, Grow (Meshulam), Carrefour, Leaan, Aroma Israel,Machsanei Hashmal, NewDeli and more.
+
+This is a great opportunity to show your talent, work with amazing people, advanced technologies and big customers.
+
+Requirements:
+
+
+
+- B.sc in computer science or other related field
+- Knowledge of PHP8, MYSQL - an advantage.
+- Knowledge of python - an advantage.
+- Experience with Javascript, Reactjs, JQuery, HTML5, XML, CSS, responsive HTML - an advantage
+- Highly motivated, a quick learner and a team player
+-  Personal Projects would be considered as experience.
