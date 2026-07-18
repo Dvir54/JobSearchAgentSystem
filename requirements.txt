@@ -1,0 +1,5 @@
+anthropic>=0.69
+apify-client>=1.7
+pydantic>=2.7
+python-dotenv>=1.0
+pytest>=8.0

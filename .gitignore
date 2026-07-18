@@ -7,6 +7,5 @@ __pycache__/
 .venv/
 venv/
 
-# Agent output and state
+# Agent output
 output/
-state/
