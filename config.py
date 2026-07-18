@@ -11,6 +11,7 @@ ROLE_QUERIES = [
 
 # Jobs scraped per role query. The cost control: Apify bills $1.00/1000
 # results, so 6 queries x 25 = 150 results = ~$0.15 per run.
+# The actor rejects any count below 10 ("must be >= 10").
 COUNT_PER_QUERY = 25
 
 # A job needs this fit score (0-100) to earn a tailored CV.
