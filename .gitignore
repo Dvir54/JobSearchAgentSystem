@@ -1,6 +1,9 @@
 # Secrets
 .env
 
+# Personal data — never push the real resume
+base_cv.txt
+
 # Python
 __pycache__/
 *.py[cod]
