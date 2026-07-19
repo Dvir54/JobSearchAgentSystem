@@ -5,7 +5,6 @@ import argparse
 import os
 import re
 import sys
-from pathlib import Path
 
 import anthropic
 from apify_client import ApifyClient
@@ -13,8 +12,10 @@ from dotenv import load_dotenv
 
 import config
 from jobs import JobPosting, build_search_url, fetch_jobs
-from scoring import JobScore, score_job
-from tailoring import TailoredCV, find_invented_skills, tailor_cv
+from render import render_output
+from resume import parse_resume
+from scoring import score_job
+from tailoring import find_entry_coverage_errors, find_invented_skills, tailor_cv
 
 
 def safe_filename(posting: JobPosting) -> str:
@@ -24,31 +25,12 @@ def safe_filename(posting: JobPosting) -> str:
     return f"{company}_{title}.md"
 
 
-def write_cv(posting: JobPosting, score: JobScore, tailored: TailoredCV, out_dir: Path) -> Path:
-    """Write one tailored CV. The job URL is in the header: a CV with no link
-    back to its posting is unusable."""
-    lines = [
-        f"# {posting.company} — {posting.title}",
-        "",
-        f"- **Fit:** {score.fit_score}/100 — {score.reason}",
-        f"- **Apply at:** {posting.url}",
-        "",
-        "## Summary",
-        "",
-        tailored.summary,
-        "",
-        "## Experience",
-        "",
-        *[f"- {bullet}" for bullet in tailored.bullets],
-        "",
-        "## Skills",
-        "",
-        " · ".join(tailored.skills),
-        "",
-    ]
+def write_cv(posting, score, tailored, parsed, out_dir):
+    """Write one complete tailored resume: metadata block above the resume."""
+    content = render_output(posting, score, parsed, tailored)
     out_dir.mkdir(parents=True, exist_ok=True)
     path = out_dir / safe_filename(posting)
-    path.write_text("\n".join(lines), encoding="utf-8")
+    path.write_text(content, encoding="utf-8")
     return path
 
 
@@ -79,6 +61,7 @@ def main() -> int:
         print(f"error: {config.BASE_CV_PATH} not found. It is the source of truth for CV content.")
         return 1
     base_cv = config.BASE_CV_PATH.read_text(encoding="utf-8")
+    parsed = parse_resume(base_cv)
 
     apify = ApifyClient(os.environ["APIFY_API_TOKEN"])
     claude = anthropic.Anthropic()
@@ -97,15 +80,15 @@ def main() -> int:
             continue
 
         # 3. Tailor.
-        tailored = tailor_cv(claude, posting, base_cv)
+        tailored = tailor_cv(claude, posting, parsed)
 
-        invented = find_invented_skills(tailored, base_cv)
-        if invented:
-            print(f"  DROP  {posting.company}: invented skills {', '.join(invented)}")
+        problems = find_invented_skills(tailored, base_cv) + find_entry_coverage_errors(tailored, parsed)
+        if problems:
+            print(f"  DROP  {posting.company}: {'; '.join(problems)}")
             continue
 
         # 4. Write.
-        path = write_cv(posting, score, tailored, config.OUTPUT_DIR)
+        path = write_cv(posting, score, tailored, parsed, config.OUTPUT_DIR)
         written += 1
         print(f"  WRITE [{score.fit_score:3}] {path.name}")
 
