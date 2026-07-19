@@ -48,9 +48,11 @@ Produce:
 - skills: the candidate's skills, ordered so the ones this posting names come first.
   Include only skills already in the CV.
 - experience: every Work Experience entry, referenced by its index, reordered so the
-  most relevant entry comes first. For each, rewrite its bullets to surface the skills
-  this posting cares about. Reference every index exactly once — never drop, add, or
-  duplicate an entry.
+  most relevant entry comes first. For each entry, reword the bullets it already has to
+  surface the skills this posting cares about. Return exactly the same number of bullets
+  the entry already has, in the same one-to-one correspondence — reword each, but never
+  add a new bullet, never split one bullet into two, never merge two into one. Reference
+  every index exactly once — never drop, add, or duplicate an entry.
 - projects: every Project entry, referenced by its index, reordered so the most
   relevant comes first. Projects have no bullets to rewrite; return an empty bullet
   list for each. Reference every index exactly once.
@@ -60,6 +62,8 @@ Hard constraints on truth:
 - Never add a technology, tool, employer, project, or metric that is not already in
   the CV. Do not imply, hint, or use adjacent phrasing to suggest one.
 - Never invent numbers. Reuse the candidate's real metrics, or omit metrics entirely.
+- Never add a bullet point. A bullet that is not a rewording of an existing bullet is
+  invented experience, even when it sounds plausible. Keep each entry's bullet count.
 
 Hard constraints on sounding natural — these matter as much as accuracy:
 - Do not copy the posting's phrasing verbatim. Use the ordinary vocabulary of the field.
