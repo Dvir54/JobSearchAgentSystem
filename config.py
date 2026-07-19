@@ -22,6 +22,13 @@ MAX_TOKENS = 16000
 
 ACTOR_ID = "curious_coder/linkedin-jobs-scraper"
 
+# Sections rewritten per job. Every other section is copied verbatim.
+SUMMARY_SECTION = "About Me"
+SKILLS_SECTION = "Skills"
+EXPERIENCE_SECTION = "Work Experience"
+PROJECTS_SECTION = "Projects"
+TAILORED_SECTIONS = (SUMMARY_SECTION, SKILLS_SECTION, EXPERIENCE_SECTION, PROJECTS_SECTION)
+
 PROJECT_ROOT = Path(__file__).parent
-BASE_CV_PATH = PROJECT_ROOT / "base_cv.txt"
+BASE_CV_PATH = PROJECT_ROOT / "base_cv.md"
 OUTPUT_DIR = PROJECT_ROOT / "output"
