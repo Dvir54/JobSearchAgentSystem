@@ -29,6 +29,7 @@ EXPERIENCE_SECTION = "Work Experience"
 PROJECTS_SECTION = "Projects"
 TAILORED_SECTIONS = (SUMMARY_SECTION, SKILLS_SECTION, EXPERIENCE_SECTION, PROJECTS_SECTION)
 
-PROJECT_ROOT = Path(__file__).parent
+# The repo root — one level up from src/, where data and output live.
+PROJECT_ROOT = Path(__file__).parent.parent
 BASE_CV_PATH = PROJECT_ROOT / "base_cv.md"
 OUTPUT_DIR = PROJECT_ROOT / "output"

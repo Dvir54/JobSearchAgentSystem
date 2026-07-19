@@ -1,0 +1,5 @@
+[tool.pytest.ini_options]
+# Source modules live in src/; put it on the path so tests import them
+# with flat names (e.g. `from jobs import ...`), matching how the app runs.
+pythonpath = ["src"]
+testpaths = ["tests"]
