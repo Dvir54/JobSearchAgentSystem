@@ -48,6 +48,13 @@ def test_project_entries_keep_name_and_tech_and_have_no_bullets():
     assert entries[0].bullets == []
 
 
+def test_last_entry_anchor_excludes_the_section_separator():
+    # The --- separator before the next section must not leak into the last
+    # bullet-less entry's anchor.
+    entries = _parsed().get("Projects").entries
+    assert entries[1].anchor == "### Chat Bot\nPython, WebSockets"
+
+
 def test_static_section_body_is_kept_verbatim():
     body = _parsed().get("Education").body
     assert "### B.Sc. Computer Science" in body

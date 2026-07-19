@@ -58,7 +58,7 @@ def _build_entry(lines: list[str]) -> Entry:
         if _BULLET_RE.match(ln):
             in_bullets = True
             bullets.append(_BULLET_RE.sub("", ln).strip())
-        elif not in_bullets and ln.strip():
+        elif not in_bullets and ln.strip() and ln.strip() != "---":
             anchor_lines.append(ln.rstrip())
     return Entry(anchor="\n".join(anchor_lines), bullets=bullets)
 
