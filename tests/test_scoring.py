@@ -33,13 +33,21 @@ def test_build_scoring_prompt_includes_description_and_cv():
 
 
 def test_score_job_returns_the_parsed_score():
-    expected = JobScore(is_junior_friendly=True, fit_score=80, reason="Entry level.")
+    expected = JobScore(is_junior_friendly=True, fit_score=80, match_kind="direct", reason="Entry level.")
     client = FakeClient(expected)
     assert score_job(client, _posting(), "I know Python.") == expected
 
 
+def test_score_carries_match_kind():
+    expected = JobScore(is_junior_friendly=True, fit_score=75, match_kind="stretch", reason="Learnable.")
+    client = FakeClient(expected)
+    assert score_job(client, _posting(), "cv").match_kind == "stretch"
+
+
 def test_score_job_requests_structured_output_from_the_right_model():
-    client = FakeClient(JobScore(is_junior_friendly=False, fit_score=0, reason="Senior."))
+    client = FakeClient(
+        JobScore(is_junior_friendly=False, fit_score=0, match_kind="direct", reason="Senior.")
+    )
     score_job(client, _posting(), "cv")
 
     kwargs = client.messages.last_kwargs

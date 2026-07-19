@@ -90,7 +90,7 @@ def main() -> int:
         # 4. Write.
         path = write_cv(posting, score, tailored, parsed, config.OUTPUT_DIR)
         written += 1
-        print(f"  WRITE [{score.fit_score:3}] {path.name}")
+        print(f"  WRITE [{score.fit_score:3}] ({score.match_kind:7}) {path.name}")
 
     print(f"\n{written} tailored CVs in {config.OUTPUT_DIR}")
     return 0

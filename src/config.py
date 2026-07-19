@@ -1,12 +1,11 @@
 from pathlib import Path
 
 ROLE_QUERIES = [
-    "software engineer",
+    "software developer",
     "backend developer",
     "fullstack developer",
-    "QA automation engineer",
-    "DevOps engineer",
-    "cybersecurity engineer",
+    "ai engineer",
+    "qa automation",
 ]
 
 # Jobs scraped per role query. The cost control: Apify bills $1.00/1000

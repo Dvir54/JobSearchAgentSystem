@@ -2,6 +2,8 @@
 
 Called once per posting — the run's main Claude cost.
 """
+from typing import Literal
+
 from pydantic import BaseModel
 
 from config import CLAUDE_MODEL, MAX_TOKENS
@@ -11,26 +13,46 @@ from jobs import JobPosting
 class JobScore(BaseModel):
     is_junior_friendly: bool
     fit_score: int
+    match_kind: Literal["direct", "stretch"]
     reason: str
 
 
-SYSTEM_PROMPT = """You evaluate job postings for a junior software engineer in Israel.
+SYSTEM_PROMPT = """You evaluate job postings for a junior software engineer in Israel who
+is finishing a Computer Science degree. Your job is to decide whether this is a role the
+candidate should realistically apply to as a junior — NOT whether they already tick every
+box on the posting's wish list. Most postings list aspirational requirements; a strong
+junior candidate rarely meets all of them on paper, and that is expected.
 
-Decide two things:
+Decide three things:
 
-1. is_junior_friendly: would this role realistically consider a junior candidate?
-   Judge from the requirements text, not the title. Postings mislabel seniority in
-   both directions: a "Junior" title demanding 5 years is not junior-friendly, and a
-   posting with no seniority in the title but entry-level requirements is.
-   A hard requirement of 3+ years of professional experience means not junior-friendly.
+1. is_junior_friendly: would this role realistically consider a junior or a recent
+   graduate? Judge from the requirements text, not the title. A "Junior" title demanding
+   5 years is not junior-friendly; a plain title with entry-level requirements is. Treat a
+   hard requirement of 3+ years of professional experience, or a "Senior"/"Staff"/"Lead"/
+   "Experienced" role, as NOT junior-friendly. If it is not junior-friendly, the candidate
+   should not apply, so score fit low regardless of skills overlap.
 
-2. fit_score (0-100): how well the candidate's actual background matches this
-   posting's requirements. Base this only on the CV provided. A posting demanding
-   technologies absent from the CV scores low even if it is junior-friendly. Do not
-   inflate: a score above 70 means the candidate could apply today and be taken
-   seriously, not that the role is vaguely adjacent to their skills.
+2. fit_score (0-100): for a JUNIOR-FRIENDLY role, how good a target is this for THIS
+   candidate? Score generously toward "should apply," in two ways:
+   - The candidate already meets the core requirements (their languages, projects, or
+     internship line up with what the role centers on).
+   - OR the role is a junior-level entry point where the candidate lacks some specific
+     tools, BUT the gap is learnable on the job given their CS foundation, programming
+     fundamentals, and adjacent skills. A missing framework, cloud tool, or library that a
+     motivated junior could pick up in weeks is NOT a reason to score low.
+   Score LOW only when the role is a genuine mismatch: it needs deep specialized expertise
+   a junior cannot pick up quickly (e.g. years of chip physical-design, advanced ML
+   research, senior security work), it is in a different discipline, or it is not
+   junior-friendly. A score of 70+ means "this is a sensible junior application" — whether
+   a direct fit or a reasonable learnable stretch. Do not reserve 70+ for perfect matches.
 
-Give a one-sentence reason citing the specific requirement that drove your decision."""
+3. match_kind: "direct" if the candidate substantially meets the role's core requirements
+   already; "stretch" if it is a junior-friendly role they should apply to but would be
+   learning meaningful parts on the job. (This label only matters when the role passes, but
+   always provide it.)
+
+Give a one-sentence reason citing the specific requirement or gap that drove your decision,
+and — for a stretch — what makes the gap learnable for a junior."""
 
 
 def build_scoring_prompt(posting: JobPosting, base_cv: str) -> str:

@@ -14,6 +14,7 @@ class FakePosting:
 
 class FakeScore:
     fit_score = 82
+    match_kind = "stretch"
     reason = "Strong match."
 
 
@@ -36,6 +37,12 @@ def test_metadata_block_is_above_the_resume():
     out = _out()
     assert out.index("**Fit:** 82/100") < out.index("---") < out.index("# Test Candidate")
     assert "https://example.com/job" in out
+
+
+def test_match_kind_shown_in_metadata():
+    out = _out()
+    assert "**Match:** Learnable stretch" in out
+    assert out.index("**Match:**") < out.index("# Test Candidate")
 
 
 def test_all_sections_present_in_original_order():
