@@ -100,11 +100,13 @@ in Phase 1. The guards check structure and the skills list, not the truth of fre
 
 ## Output: `main.py` `write_cv`
 
-A complete resume written to `output/{Company}_{Role}.md`:
+A complete resume written to `output/{Company}_{Role}.md`, in two clearly separated parts:
 
-- A small **metadata block** at the very top — fit score, reason, and apply URL — then a
-  `---` rule. Everything below the rule is a clean, sendable resume.
-- The **preamble** (name, contact) verbatim.
+- **Part 1 — metadata (not part of the resume).** A small block at the very top holding the
+  fit score, reason, and apply URL, closed by a `---` rule. This exists for the candidate's
+  review only; it is understood to be *above* the resume, not part of it.
+- **Part 2 — the resume itself, beginning after the `---`.** It starts with the **preamble**
+  (name, contact) verbatim.
 - Every section in the **original file order**: static sections copied verbatim; tailored
   sections rendered from the `TailoredCV` — `## About Me` from `summary`, `## Skills` from
   the reordered `skills`, `## Work Experience` and `## Projects` as each entry's verbatim
