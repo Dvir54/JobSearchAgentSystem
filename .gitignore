@@ -3,6 +3,7 @@
 
 # Personal data — never push the real resume
 base_cv.txt
+base_cv.md
 
 # Python
 __pycache__/
