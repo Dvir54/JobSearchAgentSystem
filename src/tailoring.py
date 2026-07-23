@@ -136,32 +136,41 @@ SKILL_ALIASES = {
 }
 
 
-def _canonicalize(text: str) -> str:
-    """Lowercase and replace known skill shortcuts with their canonical form,
-    matching whole words only."""
-    text = text.lower()
+def _alias_forms(skill: str) -> set[str]:
+    """All acceptable spellings of a skill: the skill itself, its canonical alias,
+    and any shortcuts that canonicalize to it. We compare against the raw CV text,
+    so the CV is never mutated (and never corrupted)."""
+    forms = {skill}
+    if skill in SKILL_ALIASES:
+        forms.add(SKILL_ALIASES[skill])
     for alias, canon in SKILL_ALIASES.items():
-        text = re.sub(rf"\b{re.escape(alias)}\b", canon, text)
-    return text
+        if canon == skill:
+            forms.add(alias)
+    return forms
 
 
-def _skill_in_cv(skill: str, canon_cv: str) -> bool:
-    """True if the alias-resolved skill appears as a whole word/phrase in the
-    already-alias-resolved CV text. Word boundaries stop 'React' matching inside
-    'reactive'; symbol-edged skills (c++, .net) drop the boundary on that edge."""
-    canon_skill = _canonicalize(skill).strip()
-    if not canon_skill:
+def _present(form: str, cv_lower: str) -> bool:
+    """True if `form` appears as a whole word/phrase in the lowercased CV. Word
+    boundaries stop 'react' matching inside 'reactive'; symbol edges (c++, .net)
+    drop the boundary on that side so they still match."""
+    if not form:
         return False
-    left = r"\b" if canon_skill[0].isalnum() else ""
-    right = r"\b" if canon_skill[-1].isalnum() else ""
-    return re.search(left + re.escape(canon_skill) + right, canon_cv) is not None
+    left = r"\b" if form[0].isalnum() else ""
+    right = r"\b" if form[-1].isalnum() else ""
+    return re.search(left + re.escape(form) + right, cv_lower) is not None
 
 
 def find_invented_skills(tailored: TailoredCV, base_cv: str) -> list[str]:
-    """Return tailored skills whose canonical form does not appear in the base CV.
-    Alias-aware (JS == JavaScript) and word-boundary-aware (React != reactive)."""
-    canon_cv = _canonicalize(base_cv)
-    return [skill for skill in tailored.skills if not _skill_in_cv(skill, canon_cv)]
+    """Return tailored skills whose canonical form is absent from the base CV.
+    Alias-aware (JS == JavaScript, either direction) and word-boundary-aware
+    (React != reactive)."""
+    cv_lower = base_cv.lower()
+    invented: list[str] = []
+    for skill in tailored.skills:
+        forms = _alias_forms(skill.lower().strip())
+        if not any(_present(form, cv_lower) for form in forms):
+            invented.append(skill)
+    return invented
 
 
 def strip_invented_skills(tailored: TailoredCV, base_cv: str) -> tuple[TailoredCV, list[str]]:

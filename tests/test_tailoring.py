@@ -131,6 +131,22 @@ def test_find_invented_skills_matches_symbol_skills():
     assert find_invented_skills(tailored, _cv("C++, Python")) == []
 
 
+def test_find_invented_skills_accepts_node_js_symbol_alias():
+    tailored = TailoredCV(summary="s", skills=["Node.js"], experience=[], projects=[])
+    assert find_invented_skills(tailored, _cv("Node, Python")) == []
+
+
+def test_find_invented_skills_accepts_reverse_alias_direction():
+    # CV uses the shorthand; the tailored skill uses the canonical form.
+    tailored = TailoredCV(summary="s", skills=["JavaScript"], experience=[], projects=[])
+    assert find_invented_skills(tailored, _cv("JS, Python")) == []
+
+
+def test_find_invented_skills_matches_dotnet_and_csharp():
+    tailored = TailoredCV(summary="s", skills=["C#", ".NET"], experience=[], projects=[])
+    assert find_invented_skills(tailored, _cv("C#, .NET, Python")) == []
+
+
 def test_strip_invented_skills_removes_only_invented_and_reports_them():
     tailored = TailoredCV(summary="s", skills=["Python", "Kubernetes", "Docker"],
                           experience=[], projects=[])
