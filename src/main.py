@@ -17,7 +17,7 @@ from jobs import JobPosting, build_harvestapi_input, fetch_jobs
 from render import render_output
 from resume import parse_resume
 from scoring import score_job
-from tailoring import find_entry_coverage_errors, find_invented_skills, tailor_cv
+from tailoring import repair_entry_coverage, strip_invented_skills, tailor_cv
 
 
 def safe_filename(posting: JobPosting) -> str:
@@ -27,9 +27,10 @@ def safe_filename(posting: JobPosting) -> str:
     return f"{company}_{title}.md"
 
 
-def write_cv(posting, score, tailored, parsed, out_dir):
-    """Write one complete tailored resume: metadata block above the resume."""
-    content = render_output(posting, score, parsed, tailored)
+def write_cv(posting, score, tailored, parsed, out_dir, notes=None):
+    """Write one complete tailored resume: metadata block (with any correction
+    notes) above the resume."""
+    content = render_output(posting, score, parsed, tailored, notes)
     out_dir.mkdir(parents=True, exist_ok=True)
     path = out_dir / safe_filename(posting)
     path.write_text(content, encoding="utf-8")
@@ -87,15 +88,20 @@ def main() -> int:
         # 3. Tailor.
         tailored = tailor_cv(claude, posting, parsed)
 
-        problems = find_invented_skills(tailored, base_cv) + find_entry_coverage_errors(tailored, parsed)
-        if problems:
-            print(f"  DROP  {posting.company}: {'; '.join(problems)}")
-            continue
+        # 4. Repair, don't drop: strip invented skills and fix entry coverage,
+        #    keeping the résumé and logging every correction.
+        tailored, removed_skills = strip_invented_skills(tailored, base_cv)
+        tailored, notes = repair_entry_coverage(tailored, parsed)
+        if removed_skills:
+            notes = [f"removed unverified skills: {', '.join(removed_skills)}"] + notes
 
-        # 4. Write.
-        path = write_cv(posting, score, tailored, parsed, config.OUTPUT_DIR)
+        # 5. Write.
+        path = write_cv(posting, score, tailored, parsed, config.OUTPUT_DIR, notes)
         written += 1
-        print(f"  WRITE [{score.fit_score:3}] ({score.match_kind:7}) {path.name}")
+        tag = "  (auto-corrected)" if notes else ""
+        print(f"  WRITE [{score.fit_score:3}] ({score.match_kind:7}) {path.name}{tag}")
+        for note in notes:
+            print(f"          - {note}")
 
     print(f"\n{written} tailored CVs in {config.OUTPUT_DIR}")
     return 0
