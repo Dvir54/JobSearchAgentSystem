@@ -1,12 +1,20 @@
 """The only module that knows where jobs come from.
 
-Everything downstream consumes JobPosting. Swapping to JSearch means
-rewriting this file and nothing else.
+Jobs are fetched through Monid (monid.ai), which routes to the Apify
+harvestapi LinkedIn job-search actor. Everything downstream consumes
+JobPosting; swapping the source means changing config.MONID_ENDPOINT and
+this file's input/normalization, and nothing else.
 """
 from dataclasses import dataclass
-from urllib.parse import quote
 
-from config import ACTOR_ID
+from config import (
+    EXPERIENCE_LEVELS,
+    LOCATION,
+    MAX_ITEMS_PER_QUERY,
+    MONID_ENDPOINT,
+    MONID_PROVIDER,
+    POSTED_LIMIT,
+)
 
 
 @dataclass(frozen=True)
@@ -19,43 +27,50 @@ class JobPosting:
     posted_date: str | None
 
 
-def build_search_url(keyword: str) -> str:
-    """Build a LinkedIn job-search URL. f_E=2 is LinkedIn's entry-level filter."""
-    return (
-        "https://www.linkedin.com/jobs/search/"
-        f"?keywords={quote(keyword)}&location=Israel&f_E=2"
-    )
+def build_harvestapi_input(queries):
+    """Build the harvestapi request body. All queries go in one call; the
+    actor runs each jobTitle server-side. Filters come from config."""
+    return {
+        "body": {
+            "jobTitles": list(queries),
+            "locations": [LOCATION],
+            "experienceLevel": list(EXPERIENCE_LEVELS),
+            "maxItems": MAX_ITEMS_PER_QUERY,
+            "postedLimit": POSTED_LIMIT,
+            "sortBy": "date",
+        }
+    }
 
 
-def normalize_posting(raw: dict) -> JobPosting:
-    """Map one raw actor item to JobPosting. Field names verified in Spike A."""
+def normalize_posting(raw):
+    """Map one harvestapi item to JobPosting. Field names verified against a
+    live harvestapi response (company is nested under 'company')."""
+    company = raw.get("company") or {}
     return JobPosting(
         id=str(raw["id"]),
         title=raw["title"],
-        company=raw["companyName"],
+        company=company.get("name", ""),
         description=raw.get("descriptionText", ""),
-        url=raw["link"],
-        posted_date=raw.get("postedAt"),
+        url=raw["linkedinUrl"],
+        posted_date=raw.get("postedDate"),
     )
 
 
-def fetch_jobs(client, keywords: list[str], count: int) -> list[JobPosting]:
-    """Run the actor once per keyword and return normalized postings.
+def fetch_jobs(run, queries):
+    """Fetch and normalize postings via a Monid run callable.
 
-    Raises RuntimeError on zero results across all queries: that means the
-    community-maintained scraper broke, not that Israel has no jobs today.
+    `run` is monid.run_and_wait bound to a session, called as
+    run(provider, endpoint, run_input) -> list[dict].
+
+    Raises RuntimeError on zero results: an empty run means the source is
+    broken or blocked, not that Israel has no jobs today — abort before any
+    Claude spend.
     """
-    postings: list[JobPosting] = []
-    for keyword in keywords:
-        run = client.actor(ACTOR_ID).call(
-            run_input={"urls": [build_search_url(keyword)], "count": count}
-        )
-        items = list(client.dataset(run.default_dataset_id).iterate_items())
-        postings.extend(normalize_posting(item) for item in items)
-
+    items = run(MONID_PROVIDER, MONID_ENDPOINT, build_harvestapi_input(queries))
+    postings = [normalize_posting(item) for item in items]
     if not postings:
         raise RuntimeError(
-            "Apify actor returned zero results across all queries. "
-            "The scraper is likely broken or blocked — check it before spending on Claude."
+            "Monid harvestapi returned zero results. The source is likely "
+            "broken or blocked — check it before spending on Claude."
         )
     return postings

@@ -19,8 +19,6 @@ FIT_THRESHOLD = 70
 CLAUDE_MODEL = "claude-opus-4-8"
 MAX_TOKENS = 16000
 
-ACTOR_ID = "curious_coder/linkedin-jobs-scraper"
-
 # Sections rewritten per job. Every other section is copied verbatim.
 SUMMARY_SECTION = "About Me"
 SKILLS_SECTION = "Skills"
