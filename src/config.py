@@ -36,3 +36,7 @@ LOCATION = "Israel"
 EXPERIENCE_LEVELS = ["internship", "entry", "associate"]
 POSTED_LIMIT = "week"          # interim window for tuning; becomes "24h" in the daily phase
 MAX_ITEMS_PER_QUERY = 25       # harvestapi bills per result; maxItems per jobTitle x location
+
+# Keep only postings whose location text contains this (case-insensitive). The
+# source's location filter is leaky and returns EMEA/MENA remote roles.
+LOCATION_KEYWORD = "israel"
