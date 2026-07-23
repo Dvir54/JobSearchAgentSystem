@@ -13,7 +13,7 @@ It stops at "here's a tailored résumé worth sending." It does **not** apply fo
 
 You run one command. The agent then:
 
-1. **Searches** LinkedIn (via Monid, which routes to Apify's harvestapi scraper) for 6 role types in Israel, entry-level filter.
+1. **Searches** LinkedIn (via Monid, which routes to Apify's harvestapi scraper) for 5 role types in Israel, entry-level filter.
 2. **Scores** every posting with one Claude call — is it junior-friendly, and how well does it fit your CV (0–100)?
 3. **Keeps** only jobs that are junior-friendly *and* score ≥ 70.
 4. **Tailors** your résumé to each surviving job with a second Claude call — reordering and rewording only what your CV already supports.
@@ -139,7 +139,7 @@ python -m venv .venv
 ## Running it
 
 ```bash
-# See the search URLs and projected cost without spending anything:
+# See the harvestapi search input and projected cost without spending anything:
 .venv/Scripts/python.exe src/main.py --dry-run
 
 # Run for real (scrapes jobs, scores each, writes tailored résumés):
@@ -147,11 +147,11 @@ python -m venv .venv
 ```
 
 Each posting costs one Claude scoring call; each match costs one more tailoring call.
-A full run scrapes ~150 jobs (~$0.15 on Monid) plus Claude usage.
+A full run scrapes ~125 jobs (~$0.19 on Monid) plus Claude usage.
 
-**Tuning** (all in `src/config.py`): the 6 role queries, `COUNT_PER_QUERY` (jobs per
-query; the scraper's minimum is 10), and `FIT_THRESHOLD` (the score a job needs to earn
-a résumé).
+**Tuning** (all in `src/config.py`): the 5 role queries, `MAX_ITEMS_PER_QUERY` (jobs per
+query), `FIT_THRESHOLD` (the score a job needs to earn a résumé), and the search filters
+`EXPERIENCE_LEVELS`, `POSTED_LIMIT`, and `LOCATION_KEYWORD` (keeps only Israel-located jobs).
 
 ---
 
@@ -178,9 +178,10 @@ Run the tests with: `.venv/Scripts/python.exe -m pytest`
 
 ## What it does NOT do (yet)
 
-Deliberately out of scope for now: deduplication, ranking/top-N, PDF export, auto-apply,
-scheduling, and any role or location outside Israel. The tool hands you a tailored draft —
-you decide whether to send it.
+Deliberately out of scope for now: cross-run/daily deduplication (a seen-jobs memory across
+days), ranking/top-N, PDF export, auto-apply, and scheduling. Within a single run it already
+dedupes repeated postings and keeps only Israel-located jobs. The tool hands you a tailored
+draft — you decide whether to send it.
 
 ---
 
