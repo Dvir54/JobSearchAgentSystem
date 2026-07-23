@@ -4,8 +4,8 @@ from tailoring import (
     TailoredCV,
     TailoredEntry,
     build_tailoring_prompt,
-    find_entry_coverage_errors,
     find_invented_skills,
+    repair_entry_coverage,
     strip_invented_skills,
     tailor_cv,
 )
@@ -162,23 +162,36 @@ def test_strip_invented_skills_noop_when_all_present():
     assert cleaned.skills == ["Python"]
 
 
-def test_entry_coverage_accepts_full_reordered_coverage():
-    assert find_entry_coverage_errors(_valid_tailored(), PARSED) == []
+def test_repair_leaves_valid_coverage_untouched():
+    valid = _valid_tailored()
+    repaired, notes = repair_entry_coverage(valid, PARSED)
+    assert notes == []
+    assert repaired == valid
 
 
-def test_entry_coverage_flags_missing_experience_entry():
+def test_repair_readds_missing_experience_entry_with_original_bullets():
+    # Claude returned only entry [0]; entry [1] (Intern | Beta) was dropped.
     tailored = TailoredCV(summary="s", skills=["Python"],
-                          experience=[TailoredEntry(entry_index=0, bullets=["b"])],
+                          experience=[TailoredEntry(entry_index=0, bullets=["reworded"])],
                           projects=[TailoredEntry(entry_index=0, bullets=[])])
-    errors = find_entry_coverage_errors(tailored, PARSED)
-    assert any("experience" in e for e in errors)
+    repaired, notes = repair_entry_coverage(tailored, PARSED)
+    indices = [e.entry_index for e in repaired.experience]
+    assert sorted(indices) == [0, 1]
+    readded = next(e for e in repaired.experience if e.entry_index == 1)
+    assert readded.bullets == ["Wrote scripts."]  # original base bullets, not invented
+    assert any("re-added" in n and "[1]" in n for n in notes)
 
 
-def test_entry_coverage_flags_duplicate_and_out_of_range():
-    dup = TailoredCV(summary="s", skills=["Python"],
-                     experience=[TailoredEntry(entry_index=0, bullets=["b"]),
-                                 TailoredEntry(entry_index=0, bullets=["b"])],
-                     projects=[TailoredEntry(entry_index=5, bullets=[])])
-    errors = find_entry_coverage_errors(dup, PARSED)
-    assert any("experience" in e for e in errors)
-    assert any("projects" in e for e in errors)
+def test_repair_drops_duplicate_and_out_of_range():
+    tailored = TailoredCV(summary="s", skills=["Python"],
+                          experience=[TailoredEntry(entry_index=0, bullets=["a"]),
+                                      TailoredEntry(entry_index=0, bullets=["dup"])],
+                          projects=[TailoredEntry(entry_index=5, bullets=[])])
+    repaired, notes = repair_entry_coverage(tailored, PARSED)
+    exp_indices = [e.entry_index for e in repaired.experience]
+    assert exp_indices == [0, 1]                       # dup removed, missing [1] re-added
+    assert repaired.experience[0].bullets == ["a"]     # first occurrence kept
+    proj_indices = [e.entry_index for e in repaired.projects]
+    assert proj_indices == [0]                          # out-of-range [5] removed, [0] re-added
+    assert any("duplicate" in n for n in notes)
+    assert any("out-of-range" in n for n in notes)

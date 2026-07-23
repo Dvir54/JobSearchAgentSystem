@@ -3,7 +3,7 @@
 Truthfulness is enforced by construction and by checks. Entry anchors
 (titles, dates, project names) never pass through Claude — the model
 returns entries by index and reworded bullets only. find_invented_skills()
-and find_entry_coverage_errors() gate the result before it is written.
+and repair_entry_coverage() gate the result before it is written.
 """
 import re
 
@@ -184,18 +184,44 @@ def strip_invented_skills(tailored: TailoredCV, base_cv: str) -> tuple[TailoredC
     return tailored.model_copy(update={"skills": kept}), invented
 
 
-def find_entry_coverage_errors(tailored: TailoredCV, parsed: ParsedResume) -> list[str]:
-    """Return problems if the tailored entries do not reference each base entry
-    exactly once. Catches dropped, duplicated, and out-of-range indices."""
-    experience = parsed.get(EXPERIENCE_SECTION)
-    projects = parsed.get(PROJECTS_SECTION)
-    checks = [
-        ("experience", tailored.experience, len(experience.entries) if experience else 0),
-        ("projects", tailored.projects, len(projects.entries) if projects else 0),
-    ]
-    errors: list[str] = []
-    for label, tailored_entries, count in checks:
-        got = sorted(entry.entry_index for entry in tailored_entries)
-        if got != list(range(count)):
-            errors.append(f"{label}: expected each of {list(range(count))} once, got {got}")
-    return errors
+def _repair_section(tailored_entries, base_entries, label, with_bullets):
+    """Return (valid_entries, notes): drop out-of-range and duplicate indices,
+    then append any missing base entry (in original order) using its own bullets."""
+    count = len(base_entries)
+    notes: list[str] = []
+    seen: set[int] = set()
+    result: list[TailoredEntry] = []
+    for entry in tailored_entries:
+        idx = entry.entry_index
+        if idx < 0 or idx >= count:
+            notes.append(f"{label}: removed out-of-range index [{idx}]")
+            continue
+        if idx in seen:
+            notes.append(f"{label}: removed duplicate index [{idx}]")
+            continue
+        seen.add(idx)
+        result.append(entry)
+    for idx in range(count):
+        if idx not in seen:
+            bullets = list(base_entries[idx].bullets) if with_bullets else []
+            result.append(TailoredEntry(entry_index=idx, bullets=bullets))
+            notes.append(f"{label}: re-added missing entry [{idx}] with its original bullets")
+    return result, notes
+
+
+def repair_entry_coverage(tailored: TailoredCV, parsed: ParsedResume) -> tuple[TailoredCV, list[str]]:
+    """Make experience/projects reference each base entry exactly once, keeping the
+    résumé. Drops out-of-range and duplicate indices; re-adds any missing base entry
+    at the end with its original bullets. Returns the repaired CV and repair notes."""
+    exp_section = parsed.get(EXPERIENCE_SECTION)
+    proj_section = parsed.get(PROJECTS_SECTION)
+    exp_entries = exp_section.entries if exp_section else []
+    proj_entries = proj_section.entries if proj_section else []
+
+    repaired_exp, exp_notes = _repair_section(tailored.experience, exp_entries, "experience", True)
+    repaired_proj, proj_notes = _repair_section(tailored.projects, proj_entries, "projects", False)
+
+    if not exp_notes and not proj_notes:
+        return tailored, []
+    repaired = tailored.model_copy(update={"experience": repaired_exp, "projects": repaired_proj})
+    return repaired, exp_notes + proj_notes
