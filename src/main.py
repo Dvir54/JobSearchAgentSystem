@@ -1,17 +1,19 @@
 """Entry point. Owns the sequence; every decision needing judgment is a call
-into scoring.py or tailoring.py.
+into scoring.py or tailoring.py. Jobs come from Monid (see jobs.py / monid.py).
 """
 import argparse
+import json
 import os
 import re
 import sys
 
 import anthropic
-from apify_client import ApifyClient
+import requests
 from dotenv import load_dotenv
 
 import config
-from jobs import JobPosting, build_search_url, fetch_jobs
+import monid
+from jobs import JobPosting, build_harvestapi_input, fetch_jobs
 from render import render_output
 from resume import parse_resume
 from scoring import score_job
@@ -38,7 +40,7 @@ def main() -> int:
     parser = argparse.ArgumentParser(description="Find junior jobs in Israel and tailor CVs.")
     parser.add_argument(
         "--dry-run", action="store_true",
-        help="Print the search URLs and projected cost, then exit without spending.",
+        help="Print the harvestapi search input and projected cost, then exit.",
     )
     args = parser.parse_args()
 
@@ -47,14 +49,13 @@ def main() -> int:
 
     load_dotenv()
 
-    projected = len(config.ROLE_QUERIES) * config.COUNT_PER_QUERY
-    print(f"Queries: {len(config.ROLE_QUERIES)} x {config.COUNT_PER_QUERY} results")
-    print(f"Projected: ~{projected} Apify results ≈ ${projected / 1000:.2f}")
-    print("Apify's free plan hard-stops at $5/month and blocks until the next cycle.")
+    projected = len(config.ROLE_QUERIES) * config.MAX_ITEMS_PER_QUERY
+    cost = projected * 0.0015 + len(config.ROLE_QUERIES) * 0.001
+    print(f"Queries: {len(config.ROLE_QUERIES)} x {config.MAX_ITEMS_PER_QUERY} results")
+    print(f"Projected: ~{projected} harvestapi results ≈ ${cost:.2f} via Monid")
 
     if args.dry_run:
-        for keyword in config.ROLE_QUERIES:
-            print(f"  {build_search_url(keyword)}")
+        print(json.dumps(build_harvestapi_input(config.ROLE_QUERIES), indent=2))
         return 0
 
     if not config.BASE_CV_PATH.exists():
@@ -63,11 +64,15 @@ def main() -> int:
     base_cv = config.BASE_CV_PATH.read_text(encoding="utf-8")
     parsed = parse_resume(base_cv)
 
-    apify = ApifyClient(os.environ["APIFY_API_TOKEN"])
+    session = requests.Session()
+    session.headers["Authorization"] = f"Bearer {os.environ['MONID_API_KEY']}"
     claude = anthropic.Anthropic()
 
-    # 1. Search. Raises if the scraper returned nothing — abort before Claude spend.
-    postings = fetch_jobs(apify, config.ROLE_QUERIES, config.COUNT_PER_QUERY)
+    def run(provider, endpoint, run_input):
+        return monid.run_and_wait(session, provider, endpoint, run_input)
+
+    # 1. Search. Raises if the source returned nothing — abort before Claude spend.
+    postings = fetch_jobs(run, config.ROLE_QUERIES)
     print(f"Fetched {len(postings)} postings.\n")
 
     written = 0
