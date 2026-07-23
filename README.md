@@ -112,6 +112,10 @@ For each job scoring ≥ 70, the tool writes `output/{Company}_{Role}.md`:
 
 The block above the `---` is metadata for your review; the sendable résumé starts after it.
 
+**Output for now:** résumés land flat in `output/` — one `{Company}_{Role}.md` per job that scores
+≥ 70 and passes the Israel-location filter. Re-running overwrites same-named files; there are no
+dated per-day folders yet (those arrive with the daily-run phase).
+
 ---
 
 ## Setup
@@ -161,6 +165,7 @@ query), `FIT_THRESHOLD` (the score a job needs to earn a résumé), and the sear
 src/
   config.py       tunable settings, model id, paths
   jobs.py         job source (Monid → harvestapi) — the swap seam
+  monid.py        Monid API transport (run + poll) — used by jobs.py
   scoring.py      relevance scoring (Claude)
   tailoring.py    résumé tailoring + truthfulness guards (Claude)
   resume.py       parses base_cv.md into sections and entries
