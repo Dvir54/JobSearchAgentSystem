@@ -43,13 +43,13 @@ def _render_resume(parsed: ParsedResume, tailored: TailoredCV) -> str:
 _MATCH_LABEL = {"direct": "Direct fit", "stretch": "Learnable stretch"}
 
 
-def render_output(posting, score, parsed: ParsedResume, tailored: TailoredCV) -> str:
-    metadata = "\n".join([
+def render_output(posting, score, parsed: ParsedResume, tailored: TailoredCV, notes=None) -> str:
+    lines = [
         f"- **Fit:** {score.fit_score}/100 — {score.reason}",
         f"- **Match:** {_MATCH_LABEL.get(score.match_kind, score.match_kind)}",
         f"- **Apply at:** {posting.url}",
-        "",
-        "---",
-        "",
-    ])
-    return metadata + _render_resume(parsed, tailored) + "\n"
+    ]
+    if notes:
+        lines.append(f"- **⚠️ Auto-corrected:** {'; '.join(notes)} — review before sending.")
+    lines += ["", "---", ""]
+    return "\n".join(lines) + _render_resume(parsed, tailored) + "\n"

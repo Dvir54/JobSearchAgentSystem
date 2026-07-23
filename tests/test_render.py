@@ -79,3 +79,15 @@ def test_projects_keep_tech_line_and_have_no_bullets():
     assert "### Todo App\nPython, Flask" in out
     # No section separator should leak into a project entry.
     assert "WebSockets\n---" not in out
+
+
+def test_notes_appear_in_metadata_above_the_rule():
+    out = render_output(FakePosting(), FakeScore(), PARSED, _tailored(),
+                        notes=["removed unverified skills: Kubernetes"])
+    assert "removed unverified skills: Kubernetes" in out
+    assert out.index("removed unverified skills") < out.index("---")
+
+
+def test_no_notes_line_when_notes_empty():
+    out = render_output(FakePosting(), FakeScore(), PARSED, _tailored())
+    assert "Review" not in out and "Auto-corrected" not in out
