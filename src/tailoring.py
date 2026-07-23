@@ -205,7 +205,8 @@ def _repair_section(tailored_entries, base_entries, label, with_bullets):
         if idx not in seen:
             bullets = list(base_entries[idx].bullets) if with_bullets else []
             result.append(TailoredEntry(entry_index=idx, bullets=bullets))
-            notes.append(f"{label}: re-added missing entry [{idx}] with its original bullets")
+            suffix = " with its original bullets" if with_bullets else ""
+            notes.append(f"{label}: re-added missing entry [{idx}]{suffix}")
     return result, notes
 
 

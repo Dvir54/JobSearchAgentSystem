@@ -195,3 +195,39 @@ def test_repair_drops_duplicate_and_out_of_range():
     assert proj_indices == [0]                          # out-of-range [5] removed, [0] re-added
     assert any("duplicate" in n for n in notes)
     assert any("out-of-range" in n for n in notes)
+
+
+def test_repair_rebuilds_all_missing_experience():
+    tailored = TailoredCV(summary="s", skills=["Python"],
+                          experience=[], projects=[TailoredEntry(entry_index=0, bullets=[])])
+    repaired, notes = repair_entry_coverage(tailored, PARSED)
+    assert [e.entry_index for e in repaired.experience] == [0, 1]
+    assert repaired.experience[0].bullets == ["Built APIs in Python."]
+    assert repaired.experience[1].bullets == ["Wrote scripts."]
+    assert sum("re-added" in n for n in notes) >= 2
+
+
+def test_repair_collapses_all_duplicates():
+    tailored = TailoredCV(summary="s", skills=["Python"],
+                          experience=[TailoredEntry(entry_index=0, bullets=["keep"]),
+                                      TailoredEntry(entry_index=0, bullets=["dup"]),
+                                      TailoredEntry(entry_index=0, bullets=["dup2"])],
+                          projects=[TailoredEntry(entry_index=0, bullets=[])])
+    repaired, notes = repair_entry_coverage(tailored, PARSED)
+    assert [e.entry_index for e in repaired.experience] == [0, 1]
+    assert repaired.experience[0].bullets == ["keep"]            # first occurrence kept
+    assert repaired.experience[1].bullets == ["Wrote scripts."]  # [1] rebuilt from base
+    assert any("duplicate" in n for n in notes)
+
+
+def test_repair_handles_empty_base_section():
+    # A CV whose Work Experience section has no entries: a tailored experience
+    # entry is out-of-range and dropped, and nothing is re-added.
+    empty_exp_md = "# C\n\n## Work Experience\n\n## Projects\n\n### P\nTech\n\n## Skills\n\nPython\n"
+    parsed = parse_resume(empty_exp_md)
+    tailored = TailoredCV(summary="s", skills=["Python"],
+                          experience=[TailoredEntry(entry_index=0, bullets=["x"])],
+                          projects=[TailoredEntry(entry_index=0, bullets=[])])
+    repaired, notes = repair_entry_coverage(tailored, parsed)
+    assert repaired.experience == []
+    assert any("out-of-range" in n for n in notes)
