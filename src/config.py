@@ -32,3 +32,14 @@ TAILORED_SECTIONS = (SUMMARY_SECTION, SKILLS_SECTION, EXPERIENCE_SECTION, PROJEC
 PROJECT_ROOT = Path(__file__).parent.parent
 BASE_CV_PATH = PROJECT_ROOT / "base_cv.md"
 OUTPUT_DIR = PROJECT_ROOT / "output"
+
+# --- Monid job source ---
+MONID_API_BASE = "https://api.monid.ai/v1"
+MONID_PROVIDER = "apify"
+MONID_ENDPOINT = "/harvestapi/linkedin-job-search"
+
+# Search filters sent to harvestapi (Layer 1 — coarse). Claude scoring is Layer 2.
+LOCATION = "Israel"
+EXPERIENCE_LEVELS = ["internship", "entry", "associate"]
+POSTED_LIMIT = "week"          # interim window for tuning; becomes "24h" in the daily phase
+MAX_ITEMS_PER_QUERY = 25       # harvestapi bills per result; maxItems per jobTitle x location
