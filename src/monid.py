@@ -23,6 +23,7 @@ def run_and_wait(session, provider, endpoint, run_input):
         json={"provider": provider, "endpoint": endpoint, "input": run_input},
         timeout=60,
     )
+    resp.raise_for_status()
     data = resp.json()
     run_id = data["runId"]
     status = data.get("status")
@@ -35,7 +36,9 @@ def run_and_wait(session, provider, endpoint, run_input):
                 f"after {RUN_TIMEOUT_SECONDS}s"
             )
         time.sleep(POLL_INTERVAL_SECONDS)
-        data = session.get(f"{MONID_API_BASE}/runs/{run_id}", timeout=60).json()
+        poll_resp = session.get(f"{MONID_API_BASE}/runs/{run_id}", timeout=60)
+        poll_resp.raise_for_status()
+        data = poll_resp.json()
         status = data.get("status")
 
     if status == "FAILED":

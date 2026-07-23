@@ -13,7 +13,7 @@ It stops at "here's a tailored résumé worth sending." It does **not** apply fo
 
 You run one command. The agent then:
 
-1. **Searches** LinkedIn (via an Apify scraper) for 6 role types in Israel, entry-level filter.
+1. **Searches** LinkedIn (via Monid, which routes to Apify's harvestapi scraper) for 6 role types in Israel, entry-level filter.
 2. **Scores** every posting with one Claude call — is it junior-friendly, and how well does it fit your CV (0–100)?
 3. **Keeps** only jobs that are junior-friendly *and* score ≥ 70.
 4. **Tailors** your résumé to each surviving job with a second Claude call — reordering and rewording only what your CV already supports.
@@ -32,14 +32,14 @@ base_cv.md ─┐
    ┌──────────────┐   ┌──────────────┐   ┌───────────────┐   ┌──────────────┐
    │  1. SEARCH   │──▶│  2. SCORE    │──▶│  3. TAILOR    │──▶│  4. WRITE     │
    │  jobs.py     │   │  scoring.py  │   │  tailoring.py │   │  render.py    │
-   │  (Apify)     │   │  (Claude)    │   │  (Claude)     │   │  (→ output/)  │
+   │  (Monid)     │   │  (Claude)    │   │  (Claude)     │   │  (→ output/)  │
    └──────────────┘   └──────────────┘   └───────────────┘   └──────────────┘
                             │                    │
                        fit < 70?            invented skill or
                         → skip              dropped entry? → drop
 ```
 
-- **Search** (`jobs.py`) — the only file that knows jobs come from Apify. Turns messy scraper JSON into clean `JobPosting` objects.
+- **Search** (`jobs.py`) — the only file that knows jobs come from Monid → harvestapi. Turns messy scraper JSON into clean `JobPosting` objects.
 - **Score** (`scoring.py`) — one Claude call per job. Judges seniority from the *requirements*, not the title, and scores fit only against your CV.
 - **Tailor** (`tailoring.py`) — one Claude call per match, with extended reasoning. Reorders your experience/projects most-relevant-first and rewords bullets. **Never invents** — job titles, dates, and project tech lines are passed through untouched; skills and bullets are only reworded, never added.
 - **Write** (`render.py`) — assembles the full résumé and writes it to `output/`.
@@ -126,13 +126,13 @@ python -m venv .venv
 
 # 2. Add your API keys to a .env file at the repo root (git-ignored):
 #    ANTHROPIC_API_KEY=sk-ant-...
-#    APIFY_API_TOKEN=apify_api_...
+#    MONID_API_KEY=monid_live_...
 
 # 3. Put your résumé at the repo root as base_cv.md (see format above).
 ```
 
 - **Anthropic key** — from the Anthropic Console (pay-per-use; a run costs cents).
-- **Apify token** — from the Apify Console (free tier includes ~5,000 job results/month).
+- **Monid key** — from `app.monid.ai/access/api-keys`; pay-as-you-go, billed against a prepaid balance.
 
 ---
 
@@ -147,7 +147,7 @@ python -m venv .venv
 ```
 
 Each posting costs one Claude scoring call; each match costs one more tailoring call.
-A full run scrapes ~150 jobs (~$0.15 on Apify) plus Claude usage.
+A full run scrapes ~150 jobs (~$0.15 on Monid) plus Claude usage.
 
 **Tuning** (all in `src/config.py`): the 6 role queries, `COUNT_PER_QUERY` (jobs per
 query; the scraper's minimum is 10), and `FIT_THRESHOLD` (the score a job needs to earn
@@ -160,13 +160,13 @@ a résumé).
 ```
 src/
   config.py       tunable settings, model id, paths
-  jobs.py         job source (Apify) — the swap seam
+  jobs.py         job source (Monid → harvestapi) — the swap seam
   scoring.py      relevance scoring (Claude)
   tailoring.py    résumé tailoring + truthfulness guards (Claude)
   resume.py       parses base_cv.md into sections and entries
   render.py       assembles the complete tailored résumé
   main.py         the pipeline entry point
-tests/            test suite (runs with no network — Claude/Apify are stubbed)
+tests/            test suite (runs with no network — Claude/Monid are stubbed)
 docs/             design specs and implementation plans
 pyproject.toml    pytest config
 requirements.txt  dependencies
@@ -186,5 +186,5 @@ you decide whether to send it.
 
 ## Tech stack
 
-Python 3.11+ · `anthropic` (Claude, model `claude-opus-4-8`) · `apify-client` (LinkedIn
-scraper) · `pydantic` (structured output) · `python-dotenv` · `pytest`.
+Python 3.11+ · `anthropic` (Claude, model `claude-opus-4-8`) · `requests` (Monid →
+harvestapi LinkedIn scraper) · `pydantic` (structured output) · `python-dotenv` · `pytest`.

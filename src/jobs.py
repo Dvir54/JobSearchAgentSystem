@@ -5,6 +5,7 @@ harvestapi LinkedIn job-search actor. Everything downstream consumes
 JobPosting; swapping the source means changing config.MONID_ENDPOINT and
 this file's input/normalization, and nothing else.
 """
+import sys
 from dataclasses import dataclass
 
 from config import (
@@ -95,7 +96,14 @@ def fetch_jobs(run, queries):
             continue
         seen.add(posting.id)
         unique.append(posting)
-    return [
+    filtered = [
         p for p in unique
         if p.location and LOCATION_KEYWORD in p.location.lower()
     ]
+    if items and not filtered:
+        print(
+            f"warning: fetched {len(items)} postings but none passed "
+            "dedup/Israel filter — check the source's location shape",
+            file=sys.stderr,
+        )
+    return filtered
