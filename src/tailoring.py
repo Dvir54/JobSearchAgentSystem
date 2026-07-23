@@ -5,6 +5,8 @@ Truthfulness is enforced by construction and by checks. Entry anchors
 returns entries by index and reworded bullets only. find_invented_skills()
 and find_entry_coverage_errors() gate the result before it is written.
 """
+import re
+
 from pydantic import BaseModel
 
 from config import (
@@ -118,10 +120,59 @@ def tailor_cv(client, posting: JobPosting, parsed: ParsedResume) -> TailoredCV:
     return response.parsed_output
 
 
+# Common skill shortcuts → canonical form. Applied to BOTH the tailored skill and
+# the CV text, so "JS" matches "JavaScript" written either way.
+SKILL_ALIASES = {
+    "js": "javascript",
+    "ts": "typescript",
+    "py": "python",
+    "postgres": "postgresql",
+    "psql": "postgresql",
+    "k8s": "kubernetes",
+    "gha": "github actions",
+    "gcp": "google cloud",
+    "node": "node.js",
+    "nodejs": "node.js",
+}
+
+
+def _canonicalize(text: str) -> str:
+    """Lowercase and replace known skill shortcuts with their canonical form,
+    matching whole words only."""
+    text = text.lower()
+    for alias, canon in SKILL_ALIASES.items():
+        text = re.sub(rf"\b{re.escape(alias)}\b", canon, text)
+    return text
+
+
+def _skill_in_cv(skill: str, canon_cv: str) -> bool:
+    """True if the alias-resolved skill appears as a whole word/phrase in the
+    already-alias-resolved CV text. Word boundaries stop 'React' matching inside
+    'reactive'; symbol-edged skills (c++, .net) drop the boundary on that edge."""
+    canon_skill = _canonicalize(skill).strip()
+    if not canon_skill:
+        return False
+    left = r"\b" if canon_skill[0].isalnum() else ""
+    right = r"\b" if canon_skill[-1].isalnum() else ""
+    return re.search(left + re.escape(canon_skill) + right, canon_cv) is not None
+
+
 def find_invented_skills(tailored: TailoredCV, base_cv: str) -> list[str]:
-    """Return skills present in the tailored output but absent from the base CV."""
-    haystack = base_cv.lower()
-    return [skill for skill in tailored.skills if skill.lower() not in haystack]
+    """Return tailored skills whose canonical form does not appear in the base CV.
+    Alias-aware (JS == JavaScript) and word-boundary-aware (React != reactive)."""
+    canon_cv = _canonicalize(base_cv)
+    return [skill for skill in tailored.skills if not _skill_in_cv(skill, canon_cv)]
+
+
+def strip_invented_skills(tailored: TailoredCV, base_cv: str) -> tuple[TailoredCV, list[str]]:
+    """Remove skills absent from the base CV, keeping the résumé. Returns the
+    cleaned CV and the list of removed skills (for logging)."""
+    invented = find_invented_skills(tailored, base_cv)
+    if not invented:
+        return tailored, []
+    invented_set = set(invented)
+    kept = [s for s in tailored.skills if s not in invented_set]
+    return tailored.model_copy(update={"skills": kept}), invented
 
 
 def find_entry_coverage_errors(tailored: TailoredCV, parsed: ParsedResume) -> list[str]:
