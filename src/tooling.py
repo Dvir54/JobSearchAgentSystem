@@ -1,6 +1,11 @@
 """Deterministic tooling behind the agent's tools. No claude_agent_sdk import —
 this stays unit-testable without the SDK or any agent run.
 """
+import re
+from dataclasses import dataclass
+from pathlib import Path
+
+import config
 from config import (
     EXPERIENCE_SECTION,
     LOCATION_KEYWORD,
@@ -9,7 +14,14 @@ from config import (
     SUMMARY_SECTION,
 )
 from jobs import normalize_posting
+from render import render_output
 from resume import parse_resume
+from tailoring import (
+    TailoredCV,
+    TailoredEntry,
+    repair_entry_coverage,
+    strip_invented_skills,
+)
 
 
 def _entries(parsed, section_name):
@@ -51,3 +63,61 @@ def clean_jobs(raw_items):
                 "posted_date": posting.posted_date, "location": posting.location,
             })
     return jobs
+
+
+@dataclass
+class _Posting:
+    company: str
+    title: str
+    url: str
+
+
+@dataclass
+class _Score:
+    is_junior_friendly: bool
+    fit_score: int
+    reason: str
+    match_kind: str
+
+
+def safe_filename(company, title):
+    """Company/title come from a scraper — never trust them as path components."""
+    c = re.sub(r'[<>:"/\\|?*]', "", company).strip().replace(" ", "_")
+    t = re.sub(r'[<>:"/\\|?*]', "", title).strip().replace(" ", "_")
+    return f"{c}_{t}.md"
+
+
+def write_tailored_resume(job, score, tailored, out_dir=None):
+    """The enforcement boundary. Gates on relevance, strips invented skills, repairs
+    entry coverage, renders, and writes. Returns what it wrote or why it refused.
+    The agent cannot write a résumé any other way."""
+    out_dir = Path(out_dir) if out_dir else config.OUTPUT_DIR
+    s = _Score(**{k: score[k] for k in ("is_junior_friendly", "fit_score", "reason", "match_kind")})
+
+    if not (s.is_junior_friendly and s.fit_score >= config.FIT_THRESHOLD):
+        return {"written": None, "rejected": True,
+                "reason": f"below threshold or not junior-friendly (fit {s.fit_score})",
+                "corrections": []}
+
+    base_cv = config.BASE_CV_PATH.read_text(encoding="utf-8")
+    parsed = parse_resume(base_cv)
+    tcv = TailoredCV(
+        summary=tailored["summary"],
+        skills=list(tailored["skills"]),
+        experience=[TailoredEntry(entry_index=e["entry_index"], bullets=list(e["bullets"]))
+                    for e in tailored["experience"]],
+        projects=[TailoredEntry(entry_index=p["entry_index"], bullets=list(p["bullets"]))
+                  for p in tailored["projects"]],
+    )
+
+    tcv, removed = strip_invented_skills(tcv, base_cv)
+    tcv, notes = repair_entry_coverage(tcv, parsed)
+    if removed:
+        notes = [f"removed unverified skills: {', '.join(removed)}"] + notes
+
+    posting = _Posting(company=job["company"], title=job["title"], url=job["url"])
+    content = render_output(posting, s, parsed, tcv, notes)
+    out_dir.mkdir(parents=True, exist_ok=True)
+    path = out_dir / safe_filename(job["company"], job["title"])
+    path.write_text(content, encoding="utf-8")
+    return {"written": str(path), "rejected": False, "reason": "", "corrections": notes}

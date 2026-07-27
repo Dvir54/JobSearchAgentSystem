@@ -1,4 +1,7 @@
-from tooling import build_resume_view, clean_jobs
+import json
+from pathlib import Path
+
+from tooling import build_resume_view, clean_jobs, write_tailored_resume
 
 BASE_MD = """# Cand
 
@@ -58,3 +61,38 @@ def test_clean_jobs_normalizes_dedups_and_filters_israel():
 
 def test_clean_jobs_empty_input_returns_empty():
     assert clean_jobs([]) == []
+
+
+def _job():
+    return {"company": "Acme", "title": "Backend Developer", "url": "https://example.com/j"}
+
+
+def _score(fit=82, junior=True):
+    return {"is_junior_friendly": junior, "fit_score": fit,
+            "reason": "Strong match.", "match_kind": "direct"}
+
+
+def _tailored():
+    return {"summary": "Backend dev.", "skills": ["Python", "Kubernetes"],
+            "experience": [{"entry_index": 0, "bullets": ["Reworded."]}],
+            "projects": [{"entry_index": 9, "bullets": []}]}
+
+
+def test_write_rejects_below_threshold(tmp_path):
+    out = write_tailored_resume(_job(), _score(fit=40), _tailored(), out_dir=tmp_path)
+    assert out["rejected"] is True and out["written"] is None
+    assert list(tmp_path.iterdir()) == []
+
+
+def test_write_gates_guards_and_reports_corrections(tmp_path):
+    # base_cv used by the guards is the real config.BASE_CV_PATH; this test asserts
+    # the enforcement path runs. Kubernetes is invented; entry [1] and the bad
+    # project index must be repaired.
+    out = write_tailored_resume(_job(), _score(), _tailored(), out_dir=tmp_path)
+    assert out["rejected"] is False
+    path = Path(out["written"])
+    assert path.exists()
+    body = path.read_text(encoding="utf-8")
+    assert "Kubernetes" not in body.split("---", 1)[1]   # stripped from the résumé body
+    assert any("Kubernetes" in c for c in out["corrections"])
+    assert "Auto-corrected" in body                       # surfaced in the banner
