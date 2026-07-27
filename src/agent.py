@@ -203,6 +203,10 @@ def build_options() -> "ClaudeAgentOptions":
         ],
         permission_mode="dontAsk",
         max_turns=200,
+        # The Monid harvestapi result for a 'week' window (100+ jobs with full
+        # text+HTML descriptions) can exceed the SDK's 1MB default message buffer;
+        # raise it so the completed monid_get_run result fits through the pipe.
+        max_buffer_size=10 * 1024 * 1024,  # 10MB
     )
 
 
