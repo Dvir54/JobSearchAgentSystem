@@ -28,6 +28,7 @@ OUTPUT_DIR = PROJECT_ROOT / "output"
 
 # --- Monid job source ---
 MONID_API_BASE = "https://api.monid.ai/v1"
+MONID_MCP_URL = "https://mcp.monid.ai/v1"
 MONID_PROVIDER = "apify"
 MONID_ENDPOINT = "/harvestapi/linkedin-job-search"
 
