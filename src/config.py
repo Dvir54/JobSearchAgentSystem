@@ -11,9 +11,6 @@ ROLE_QUERIES = [
 # A job needs this fit score (0-100) to earn a tailored CV.
 FIT_THRESHOLD = 70
 
-CLAUDE_MODEL = "claude-opus-4-8"
-MAX_TOKENS = 16000
-
 # Sections rewritten per job. Every other section is copied verbatim.
 SUMMARY_SECTION = "About Me"
 SKILLS_SECTION = "Skills"
