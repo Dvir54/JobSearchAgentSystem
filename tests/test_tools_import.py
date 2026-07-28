@@ -12,7 +12,10 @@ def test_filter_jobs_tool_is_gone():
     assert not hasattr(tools, "_filter_jobs_impl")
 
 
-def test_agent_registers_the_reduction_hook():
+def test_agent_registers_the_reduction_hook(monkeypatch):
+    # build_options() reads os.environ['MONID_API_KEY'] directly; without a
+    # .env in the checkout this raises KeyError unless we supply a dummy.
+    monkeypatch.setenv("MONID_API_KEY", "test-key")
     import agent
     opts = agent.build_options()
     matchers = opts.hooks["PostToolUse"]

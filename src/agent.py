@@ -1,10 +1,12 @@
 """Entry point: run one autonomous job-search + tailoring session.
 
 The agent owns judgment and orchestration (job search, fit scoring, CV
-tailoring). The deterministic core — the truthfulness guards, the Israel
-filter/dedup, and the actual file write — stays code, enforced inside the
-`write_resume` tool (see tools.py / tooling.py). The agent cannot produce an
-unchecked or untruthful résumé; it can only ask the gate to try.
+tailoring). The deterministic core splits across two enforcement points: the
+Israel filter/dedup happens in the PostToolUse hook before the agent ever
+sees a job (see hooks.py / tooling.reduce_run_payload), and the truthfulness
+guards plus the actual file write happen inside the `write_resume` tool (see
+tools.py / tooling.py). The agent cannot produce an unchecked or untruthful
+résumé, nor see an unfiltered job list; it can only ask the gate to try.
 """
 import asyncio
 import os
@@ -138,9 +140,15 @@ Follow this workflow exactly:
 
 3. The completed run's result arrives ALREADY REDUCED for you: postings are normalized,
    deduped by id, and filtered down to Israel-located roles only. It is an object with
-   `window` (the posting-age window this search used), `fetched`, `kept`,
-   `dropped_duplicate`, `dropped_non_israel`, and `jobs`. Work through `jobs`. Do not try
-   to re-filter or re-dedupe it, and do not look for a `filter_jobs` tool — there is none.
+   `status` and `runId` (confirming which run this is), `window` (the posting-age window
+   this search used), `fetched`, `kept`, `dropped_duplicate`, `dropped_non_israel`, and
+   `jobs`. Receiving this object means the run has already reached COMPLETED — stop
+   polling as soon as you see it. Work through `jobs`. Do not try to re-filter or
+   re-dedupe it, and do not look for a `filter_jobs` tool — there is none. If instead you
+   ever receive a raw run object that has an `output` list but no `jobs` field, the
+   reduction step did not run for that result: in that case, and only that case, work
+   through `output` yourself — dedupe by `id` (first occurrence wins) and keep only
+   postings whose location mentions Israel — since nothing upstream has done it for you.
 
 4. For EACH job in `jobs`:
    a. Judge fit yourself using the rubric below (you replace `scoring.py`'s job): decide
@@ -180,7 +188,7 @@ def build_options() -> "ClaudeAgentOptions":
     - Monid MCP over remote HTTP with the bearer key (per docs/agent-sdk-reference.md
       section 4), plus the in-process `resume_tools` server (section 3).
     - `allowed_tools` lists exactly the Monid tools the workflow needs (run/get_run,
-      plus balance as a cheap sanity check) and the three resume tools.
+      plus balance as a cheap sanity check) and the two resume tools.
     - `permission_mode="dontAsk"`: auto-runs anything already in `allowed_tools` without
       an interactive prompt, but (unlike `bypassPermissions`) still denies anything not
       pre-approved — the safer non-prompting mode called out in the reference doc, since

@@ -28,14 +28,27 @@ def test_reduces_completed_run_to_envelope_with_counts():
         _raw("1", "Tel Aviv, Israel"),     # duplicate id
         _raw("2", "EMEA"),                 # not Israel
         _raw("3", "Haifa, Israel"),
-    ])
+    ], run_id="01ABC")
     env = json.loads(reduce_run_payload(payload))
+    assert env["status"] == "COMPLETED"
+    assert env["runId"] == "01ABC"
     assert env["window"] == "week"
     assert env["fetched"] == 4
     assert env["kept"] == 2
     assert env["dropped_duplicate"] == 1
     assert env["dropped_non_israel"] == 1
     assert [j["id"] for j in env["jobs"]] == ["1", "3"]
+
+
+def test_envelope_carries_status_and_run_id_for_polling_agent():
+    # WORKFLOW step 3 tells the agent that receiving this envelope means the
+    # run is done, so status/runId must be present and correct.
+    payload = _run(output=[_raw("1", "Tel Aviv, Israel")], run_id="01XYZ")
+    env = json.loads(reduce_run_payload(payload))
+    assert set(env) == {"status", "runId", "window", "fetched", "kept",
+                         "dropped_duplicate", "dropped_non_israel", "jobs"}
+    assert env["status"] == "COMPLETED"
+    assert env["runId"] == "01XYZ"
 
 
 def test_kept_jobs_carry_only_the_seven_needed_fields():
@@ -84,6 +97,29 @@ def test_malformed_items_pass_through_rather_than_raise():
     # blow up the run — it must fall back to the raw payload.
     payload = _run(output=[{"nonsense": True}])
     assert reduce_run_payload(payload) is None
+
+
+def test_non_dict_input_field_does_not_raise():
+    # run["input"] as a non-dict (e.g. a string) makes `_window` call .get on
+    # a str and raise AttributeError. That must degrade to pass-through, not
+    # escape the reducer.
+    payload = json.dumps({"runId": "01TEST", "status": "COMPLETED",
+                          "input": "not-a-dict",
+                          "output": [_raw("1", "Tel Aviv, Israel")]})
+    assert reduce_run_payload(payload) is None
+
+
+def test_all_filtered_out_still_returns_envelope_with_kept_zero(capsys):
+    # If harvestapi ever reshapes `location`, every item can fail the Israel
+    # filter. The envelope must still be returned (not a silent None -> raw
+    # 284K-token dump) and the situation must be loudly logged.
+    payload = _run(output=[_raw("1", "EMEA"), _raw("2", "Nowhere, Nowhere")])
+    env = json.loads(reduce_run_payload(payload))
+    assert env["fetched"] == 2
+    assert env["kept"] == 0
+    captured = capsys.readouterr()
+    assert "WARNING" in captured.err
+    assert "location" in captured.err
 
 
 def test_dict_tool_response_is_also_accepted():

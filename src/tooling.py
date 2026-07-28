@@ -155,26 +155,39 @@ def reduce_run_payload(tool_response):
     if not isinstance(items, list):
         return None
 
+    # Everything below — the reducer, the window lookup, and serialisation —
+    # must degrade to pass-through on ANY failure, never escape to the model.
     try:
         jobs = clean_jobs(items)
+        fetched = len(items)
+        unique = len({str(i.get("id")) for i in items if isinstance(i, dict)})
+        kept = len(jobs)
+        dropped_duplicate = fetched - unique
+        dropped_non_israel = unique - kept
+
+        if items and not jobs:
+            print(f"[reduce] WARNING: all {fetched} fetched postings were filtered "
+                  f"out (kept=0, dropped_non_israel={dropped_non_israel}) — likely "
+                  f"cause: upstream schema change in the 'location' field", file=sys.stderr)
+
+        envelope = {
+            "status": "COMPLETED",
+            "runId": run.get("runId"),
+            "window": _window(run),
+            "fetched": fetched,
+            "kept": kept,
+            "dropped_duplicate": dropped_duplicate,
+            "dropped_non_israel": dropped_non_israel,
+            "jobs": jobs,
+        }
+        text = json.dumps(envelope, ensure_ascii=False)
     except Exception as exc:                      # noqa: BLE001 - degrade, never crash the run
-        print(f"[reduce] clean_jobs failed ({exc!r}); passing raw output through",
+        print(f"[reduce] reduction failed ({exc!r}); passing raw output through",
               file=sys.stderr)
         return None
 
-    fetched = len(items)
-    unique = len({str(i.get("id")) for i in items if isinstance(i, dict)})
-    kept = len(jobs)
-    envelope = {
-        "window": _window(run),
-        "fetched": fetched,
-        "kept": kept,
-        "dropped_duplicate": fetched - unique,
-        "dropped_non_israel": unique - kept,
-        "jobs": jobs,
-    }
-    print(f"[reduce] run={run.get('runId')} window={envelope['window']} "
+    print(f"[reduce] run={envelope['runId']} window={envelope['window']} "
           f"fetched={fetched} kept={kept} "
-          f"dropped_duplicate={envelope['dropped_duplicate']} "
-          f"dropped_non_israel={envelope['dropped_non_israel']}", file=sys.stderr)
-    return json.dumps(envelope, ensure_ascii=False)
+          f"dropped_duplicate={dropped_duplicate} "
+          f"dropped_non_israel={dropped_non_israel}", file=sys.stderr)
+    return text
