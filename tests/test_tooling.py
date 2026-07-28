@@ -136,7 +136,6 @@ def test_write_accepts_skills_as_comma_separated_string(tmp_path):
     tailored["skills"] = "Python, Kubernetes"
     out = write_tailored_resume(_job(), _score(), tailored, out_dir=tmp_path)
     assert out["rejected"] is False
-    assert all(len(c) > 1 or "," in c or "removed" not in c for c in out["corrections"])
     kubernetes_notes = [c for c in out["corrections"] if "Kubernetes" in c]
     assert kubernetes_notes and "P, y, t" not in kubernetes_notes[0]
     assert "removed unverified skills: Kubernetes" in kubernetes_notes[0]
@@ -158,5 +157,18 @@ def test_write_rejects_entry_missing_entry_index_key(tmp_path):
     out = write_tailored_resume(_job(), _score(), tailored, out_dir=tmp_path)
     assert out["rejected"] is True and out["written"] is None
     assert "entry_index" in out["reason"]
+    assert out["corrections"] == []
+    assert list(tmp_path.iterdir()) == []
+
+
+def test_write_rejects_missing_summary_key_naming_summary_not_entries(tmp_path):
+    # Regression: the KeyError handler used to wrap tailored["summary"] too, so a
+    # missing summary was misreported as an "experience/project entry" problem.
+    tailored = _tailored()
+    del tailored["summary"]
+    out = write_tailored_resume(_job(), _score(), tailored, out_dir=tmp_path)
+    assert out["rejected"] is True and out["written"] is None
+    assert "summary" in out["reason"]
+    assert "experience/project entry" not in out["reason"]
     assert out["corrections"] == []
     assert list(tmp_path.iterdir()) == []

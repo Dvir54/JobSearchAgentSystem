@@ -127,11 +127,17 @@ def write_tailored_resume(job, score, tailored, out_dir=None):
                           f"{type(skills).__name__}",
                 "corrections": []}
 
+    if "summary" not in tailored:
+        return {"written": None, "rejected": True,
+                "reason": "tailored resume is missing required key 'summary'",
+                "corrections": []}
+    summary = tailored["summary"]
+
     try:
         base_cv = config.BASE_CV_PATH.read_text(encoding="utf-8")
         parsed = parse_resume(base_cv)
         tcv = TailoredCV(
-            summary=tailored["summary"],
+            summary=summary,
             skills=skills,
             experience=[TailoredEntry(entry_index=e["entry_index"], bullets=list(e["bullets"]))
                         for e in tailored["experience"]],
