@@ -1,7 +1,7 @@
 import json
 from pathlib import Path
 
-from tooling import build_resume_view, clean_jobs, write_tailored_resume
+from tooling import build_resume_view, clean_jobs, safe_filename, write_tailored_resume
 
 BASE_MD = """# Cand
 
@@ -63,8 +63,8 @@ def test_clean_jobs_empty_input_returns_empty():
     assert clean_jobs([]) == []
 
 
-def _job():
-    return {"company": "Acme", "title": "Backend Developer", "url": "https://example.com/j"}
+def _job(job_id="j-1"):
+    return {"id": job_id, "company": "Acme", "title": "Backend Developer", "url": "https://example.com/j"}
 
 
 def _score(fit=82, junior=True):
@@ -96,3 +96,67 @@ def test_write_gates_guards_and_reports_corrections(tmp_path):
     assert "Kubernetes" not in body.split("---", 1)[1]   # stripped from the résumé body
     assert any("Kubernetes" in c for c in out["corrections"])
     assert "Auto-corrected" in body                       # surfaced in the banner
+
+
+def test_safe_filename_includes_job_id():
+    assert safe_filename("Acme", "Backend Developer", "abc123") == "Acme_Backend_Developer_abc123.md"
+
+
+def test_safe_filename_falls_back_without_job_id():
+    assert safe_filename("Acme", "Backend Developer") == "Acme_Backend_Developer.md"
+    assert safe_filename("Acme", "Backend Developer", None) == "Acme_Backend_Developer.md"
+    assert safe_filename("Acme", "Backend Developer", "") == "Acme_Backend_Developer.md"
+
+
+def test_safe_filename_sanitises_job_id_like_company_and_title():
+    # Same character-stripping as company/title: path separators are removed,
+    # so the sanitised id cannot escape out_dir when joined onto it.
+    name = safe_filename("Acme", "Backend Developer", "../../evil")
+    assert "/" not in name and "\\" not in name
+    assert name == "Acme_Backend_Developer_....evil.md"
+
+
+def test_write_distinguishes_duplicate_titled_jobs_by_id(tmp_path):
+    # Real regression: two distinct postings with identical company+title silently
+    # overwrote each other because safe_filename keyed only on company+title.
+    job_a = _job(job_id="job-a")
+    job_b = _job(job_id="job-b")
+    out_a = write_tailored_resume(job_a, _score(), _tailored(), out_dir=tmp_path)
+    out_b = write_tailored_resume(job_b, _score(), _tailored(), out_dir=tmp_path)
+    assert out_a["written"] != out_b["written"]
+    assert Path(out_a["written"]).exists()
+    assert Path(out_b["written"]).exists()
+    assert len(list(tmp_path.iterdir())) == 2
+
+
+def test_write_accepts_skills_as_comma_separated_string(tmp_path):
+    # get_resume's own view returns skills as a string; write_tailored_resume must
+    # accept the exact format its sibling tool emits, not iterate it char-by-char.
+    tailored = _tailored()
+    tailored["skills"] = "Python, Kubernetes"
+    out = write_tailored_resume(_job(), _score(), tailored, out_dir=tmp_path)
+    assert out["rejected"] is False
+    assert all(len(c) > 1 or "," in c or "removed" not in c for c in out["corrections"])
+    kubernetes_notes = [c for c in out["corrections"] if "Kubernetes" in c]
+    assert kubernetes_notes and "P, y, t" not in kubernetes_notes[0]
+    assert "removed unverified skills: Kubernetes" in kubernetes_notes[0]
+
+
+def test_write_rejects_skills_of_unsupported_type(tmp_path):
+    tailored = _tailored()
+    tailored["skills"] = 42
+    out = write_tailored_resume(_job(), _score(), tailored, out_dir=tmp_path)
+    assert out["rejected"] is True and out["written"] is None
+    assert out["corrections"] == []
+    assert "int" in out["reason"]
+    assert list(tmp_path.iterdir()) == []
+
+
+def test_write_rejects_entry_missing_entry_index_key(tmp_path):
+    tailored = _tailored()
+    tailored["experience"] = [{"index": 0, "bullets": ["Reworded."]}]
+    out = write_tailored_resume(_job(), _score(), tailored, out_dir=tmp_path)
+    assert out["rejected"] is True and out["written"] is None
+    assert "entry_index" in out["reason"]
+    assert out["corrections"] == []
+    assert list(tmp_path.iterdir()) == []

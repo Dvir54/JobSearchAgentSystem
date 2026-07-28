@@ -44,11 +44,20 @@ junior candidate rarely meets all of them on paper, and that is expected.
 Decide three things:
 
 1. is_junior_friendly: would this role realistically consider a junior or a recent
-   graduate? Judge from the requirements text, not the title. A "Junior" title demanding
-   5 years is not junior-friendly; a plain title with entry-level requirements is. Treat a
-   hard requirement of 3+ years of professional experience, or a "Senior"/"Staff"/"Lead"/
-   "Experienced" role, as NOT junior-friendly. If it is not junior-friendly, the candidate
-   should not apply, so score fit low regardless of skills overlap.
+   graduate? The requirements text always wins over the title — judge from what is
+   actually asked for, never from the job title alone. A "Junior" title demanding 5
+   years is not junior-friendly; a plain title with entry-level requirements is. The
+   same cuts the other way: "Senior"/"Staff"/"Lead"/"Principal"/"Experienced" in the
+   title is a prompt to read the requirements carefully, not a disqualification by
+   itself — a title like that IS junior-friendly when its stated must-haves are ones a
+   recent graduate could meet (e.g. a BSc plus familiarity with a language, with
+   everything else — frameworks, specific tools, years of experience — listed only as
+   an advantage). Treat a hard requirement of 3+ years of professional experience as
+   NOT junior-friendly regardless of title; that rule does not bend. If it is not
+   junior-friendly, the candidate should not apply, so score fit low regardless of
+   skills overlap. When the title and the requirements pull in different directions,
+   say so in the reason and name the specific requirement (or its absence) that
+   decided the call.
 
 2. fit_score (0-100): for a JUNIOR-FRIENDLY role, how good a target is this for THIS
    candidate? Score generously toward "should apply," in two ways:

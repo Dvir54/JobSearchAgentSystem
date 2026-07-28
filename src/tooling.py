@@ -82,10 +82,23 @@ class _Score:
     match_kind: str
 
 
-def safe_filename(company, title):
-    """Company/title come from a scraper — never trust them as path components."""
-    c = re.sub(r'[<>:"/\\|?*]', "", company).strip().replace(" ", "_")
-    t = re.sub(r'[<>:"/\\|?*]', "", title).strip().replace(" ", "_")
+def _sanitise_path_component(value):
+    """Strip characters that make a value unsafe as a path component. Used on
+    company, title, and job_id alike — all three come from a scraper."""
+    return re.sub(r'[<>:"/\\|?*]', "", value).strip().replace(" ", "_")
+
+
+def safe_filename(company, title, job_id=None):
+    """Company/title/job_id come from a scraper — never trust them as path
+    components. Two distinct postings can share company+title (e.g. two roles
+    both titled "Software Engineer" at the same employer), so job_id — when
+    present — disambiguates the filename; without it, two such postings would
+    silently overwrite each other."""
+    c = _sanitise_path_component(company)
+    t = _sanitise_path_component(title)
+    if job_id:
+        j = _sanitise_path_component(str(job_id))
+        return f"{c}_{t}_{j}.md"
     return f"{c}_{t}.md"
 
 
@@ -101,16 +114,34 @@ def write_tailored_resume(job, score, tailored, out_dir=None):
                 "reason": f"below threshold or not junior-friendly (fit {s.fit_score})",
                 "corrections": []}
 
-    base_cv = config.BASE_CV_PATH.read_text(encoding="utf-8")
-    parsed = parse_resume(base_cv)
-    tcv = TailoredCV(
-        summary=tailored["summary"],
-        skills=list(tailored["skills"]),
-        experience=[TailoredEntry(entry_index=e["entry_index"], bullets=list(e["bullets"]))
-                    for e in tailored["experience"]],
-        projects=[TailoredEntry(entry_index=p["entry_index"], bullets=list(p["bullets"]))
-                  for p in tailored["projects"]],
-    )
+    skills = tailored["skills"]
+    if isinstance(skills, (list, tuple)):
+        skills = list(skills)
+    elif isinstance(skills, str):
+        # get_resume's own view returns skills as a comma-separated string; accept
+        # the exact format our own API emits rather than iterating it char-by-char.
+        skills = [s.strip() for s in skills.split(",") if s.strip()]
+    else:
+        return {"written": None, "rejected": True,
+                "reason": f"skills must be a list or comma-separated string, got "
+                          f"{type(skills).__name__}",
+                "corrections": []}
+
+    try:
+        base_cv = config.BASE_CV_PATH.read_text(encoding="utf-8")
+        parsed = parse_resume(base_cv)
+        tcv = TailoredCV(
+            summary=tailored["summary"],
+            skills=skills,
+            experience=[TailoredEntry(entry_index=e["entry_index"], bullets=list(e["bullets"]))
+                        for e in tailored["experience"]],
+            projects=[TailoredEntry(entry_index=p["entry_index"], bullets=list(p["bullets"]))
+                      for p in tailored["projects"]],
+        )
+    except KeyError as exc:
+        return {"written": None, "rejected": True,
+                "reason": f"experience/project entry missing required key {exc}",
+                "corrections": []}
 
     tcv, removed = strip_invented_skills(tcv, base_cv)
     tcv, notes = repair_entry_coverage(tcv, parsed)
@@ -120,7 +151,7 @@ def write_tailored_resume(job, score, tailored, out_dir=None):
     posting = _Posting(company=job["company"], title=job["title"], url=job["url"])
     content = render_output(posting, s, parsed, tcv, notes)
     out_dir.mkdir(parents=True, exist_ok=True)
-    path = out_dir / safe_filename(job["company"], job["title"])
+    path = out_dir / safe_filename(job["company"], job["title"], job.get("id"))
     path.write_text(content, encoding="utf-8")
     return {"written": str(path), "rejected": False, "reason": "", "corrections": notes}
 
