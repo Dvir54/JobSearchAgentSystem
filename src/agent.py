@@ -190,9 +190,14 @@ def build_options() -> "ClaudeAgentOptions":
     - `allowed_tools` lists exactly the Monid tools the workflow needs (run/get_run,
       plus balance as a cheap sanity check) and the two resume tools.
     - `permission_mode="dontAsk"`: auto-runs anything already in `allowed_tools` without
-      an interactive prompt, but (unlike `bypassPermissions`) still denies anything not
-      pre-approved — the safer non-prompting mode called out in the reference doc, since
-      this session runs headlessly with no human available to answer a prompt anyway.
+      an interactive prompt — the safer non-prompting mode called out in the reference
+      doc, since this session runs headlessly with no human available to answer a
+      prompt anyway. It does NOT restrict what the agent can use: `allowed_tools` only
+      PRE-APPROVES those tools, it does not deny the rest. Every built-in tool (Bash,
+      Grep, Read, Agent, ...) is still available unless separately denied. This was the
+      origin of a real defect: when the reduction hook failed silently, the agent used
+      Bash/Grep/Agent to hand-parse the raw payload instead — 256 tool calls, $7.19 in
+      one run. `disallowed_tools` is what actually restricts them.
     - `max_turns` is generous: the reference doc's spike showed the CLI defers MCP tool
       schemas behind its own `ToolSearch`, burning extra turns before real tool calls even
       start, and this session judges/tailors many jobs in a loop.
@@ -214,6 +219,14 @@ def build_options() -> "ClaudeAgentOptions":
             "mcp__resume_tools__get_resume",
             "mcp__resume_tools__write_resume",
         ],
+        # allowed_tools only PRE-APPROVES; it does not restrict. Without this the
+        # agent keeps every built-in tool and can route around a failed reduction by
+        # grepping the offloaded payload by hand — which cost $7.19 in one run.
+        disallowed_tools=[
+            "Bash", "Grep", "Glob", "Read", "Write", "Edit", "NotebookEdit",
+            "Agent", "Task", "PowerShell", "WebFetch", "WebSearch",
+        ],
+        env={"MAX_MCP_OUTPUT_TOKENS": config.MAX_MCP_OUTPUT_TOKENS},
         permission_mode="dontAsk",
         max_turns=200,
         # The Monid harvestapi result for a 'week' window (100+ jobs with full

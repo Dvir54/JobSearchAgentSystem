@@ -88,6 +88,26 @@ def test_unparseable_text_passes_through():
     assert reduce_run_payload("not json at all") is None
 
 
+def test_oversized_stub_declines_with_actionable_log(capsys):
+    # The real defect: the CLI truncates an oversized MCP result to a file
+    # BEFORE PostToolUse hooks run, so the hook receives this stub instead of
+    # JSON. json.loads fails, and the decline must be loud and actionable —
+    # not silent, since a silent decline let the raw 787KB payload through and
+    # cost $7.19 in one run.
+    stub = ("Error: result (774,006 characters) exceeds maximum allowed tokens. "
+            "Output has been saved to C:\\x\\y.txt.")
+    assert reduce_run_payload(stub) is None
+    captured = capsys.readouterr()
+    assert "DECLINED" in captured.err
+    assert "MAX_MCP_OUTPUT_TOKENS" in captured.err
+
+
+def test_running_status_declines_with_informational_log(capsys):
+    assert reduce_run_payload(_run(status="RUNNING", output=None)) is None
+    captured = capsys.readouterr()
+    assert "RUNNING" in captured.err
+
+
 def test_missing_output_list_passes_through():
     assert reduce_run_payload(json.dumps({"status": "COMPLETED"})) is None
 

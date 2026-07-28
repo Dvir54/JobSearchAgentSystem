@@ -146,13 +146,32 @@ def reduce_run_payload(tool_response):
         try:
             run = json.loads(tool_response)
         except (TypeError, ValueError):
+            preview = tool_response[:120] if isinstance(tool_response, str) else repr(tool_response)[:120]
+            print(f"[reduce] DECLINED: tool_response is not JSON — reduction did NOT run. "
+                  f"If this says 'exceeds maximum allowed tokens', raise "
+                  f"config.MAX_MCP_OUTPUT_TOKENS. Received: {preview!r}", file=sys.stderr)
             return None
 
-    if not isinstance(run, dict) or run.get("status") != "COMPLETED":
+    if not isinstance(run, dict):
+        print(f"[reduce] DECLINED: tool_response parsed to a non-dict "
+              f"({type(run).__name__}) — reduction did NOT run.", file=sys.stderr)
+        return None
+
+    status = run.get("status")
+    if status != "COMPLETED":
+        if status == "RUNNING":
+            print(f"[reduce] INFO: run status=RUNNING — still polling, nothing to "
+                  f"reduce yet; passing through.", file=sys.stderr)
+        else:
+            print(f"[reduce] DECLINED: run status={status!r} (not COMPLETED) — "
+                  f"reduction did NOT run; passing through.", file=sys.stderr)
         return None
 
     items = run.get("output")
     if not isinstance(items, list):
+        print(f"[reduce] DECLINED: run['output'] is not a list "
+              f"({type(items).__name__}) — reduction did NOT run; passing "
+              f"through.", file=sys.stderr)
         return None
 
     # Everything below — the reducer, the window lookup, and serialisation —

@@ -23,3 +23,19 @@ def test_agent_registers_the_reduction_hook(monkeypatch):
     assert "mcp__resume_tools__filter_jobs" not in opts.allowed_tools
     # the raw payload still crosses the CLI<->Python pipe to reach the hook
     assert opts.max_buffer_size == 10 * 1024 * 1024
+
+
+def test_agent_restricts_built_in_tools_and_raises_mcp_output_cap(monkeypatch):
+    # allowed_tools only PRE-APPROVES; it does not restrict built-in tools. Without
+    # disallowed_tools the agent keeps Bash/Grep/Agent/etc and can route around a
+    # failed reduction by grepping the offloaded payload by hand ($7.19 in one run).
+    # Separately, the CLI truncates oversized MCP results to a file BEFORE
+    # PostToolUse hooks run, so MAX_MCP_OUTPUT_TOKENS must be raised via env for
+    # the hook to ever see real JSON instead of a stub.
+    monkeypatch.setenv("MONID_API_KEY", "test-key")
+    import config
+    import agent
+    opts = agent.build_options()
+    assert "Bash" in opts.disallowed_tools
+    assert "Agent" in opts.disallowed_tools
+    assert opts.env["MAX_MCP_OUTPUT_TOKENS"] == config.MAX_MCP_OUTPUT_TOKENS

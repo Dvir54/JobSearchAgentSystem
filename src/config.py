@@ -37,3 +37,9 @@ MAX_ITEMS_PER_QUERY = 25       # harvestapi bills per result; maxItems per jobTi
 # Keep only postings whose location text contains this (case-insensitive). The
 # source's location filter is leaky and returns EMEA/MENA remote roles.
 LOCATION_KEYWORD = "israel"
+
+# The CLI truncates oversized MCP tool results to a file BEFORE PostToolUse hooks
+# run, which silently defeats the reduction hook. Raised so the full run payload
+# reaches the hook, which then shrinks it before the model sees it. A real 24h run
+# was 774,006 chars (~193K tokens); a week window is larger.
+MAX_MCP_OUTPUT_TOKENS = "500000"
