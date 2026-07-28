@@ -12,10 +12,6 @@ def _get_resume_impl():
     return tooling.build_resume_view(config.BASE_CV_PATH.read_text(encoding="utf-8"))
 
 
-def _filter_jobs_impl(raw_items):
-    return tooling.clean_jobs(raw_items)
-
-
 def _write_resume_impl(job, score, tailored):
     return tooling.write_tailored_resume(job, score, tailored)
 
@@ -30,12 +26,6 @@ async def get_resume(args: dict) -> dict:
     return _json_result(_get_resume_impl())
 
 
-@tool("filter_jobs", "Normalize raw scraped job postings, dedupe by id, and keep "
-      "only Israel-located postings.", {"raw_items": list})
-async def filter_jobs(args: dict) -> dict:
-    return _json_result(_filter_jobs_impl(args["raw_items"]))
-
-
 @tool("write_resume", "Gate a tailored résumé on relevance, strip invented skills, "
       "repair entry coverage, render, and write it to disk.",
       {"job": dict, "score": dict, "tailored": dict})
@@ -46,5 +36,5 @@ async def write_resume(args: dict) -> dict:
 resume_tools = create_sdk_mcp_server(
     name="resume_tools",
     version="1.0.0",
-    tools=[get_resume, filter_jobs, write_resume],
+    tools=[get_resume, write_resume],
 )

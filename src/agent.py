@@ -13,6 +13,7 @@ import sys
 from dotenv import load_dotenv
 
 import config
+import hooks
 from tools import resume_tools
 
 # Loaded at import time (not just inside main()) so that MONID_API_KEY is already
@@ -23,6 +24,7 @@ load_dotenv()
 from claude_agent_sdk import (
     AssistantMessage,
     ClaudeAgentOptions,
+    HookMatcher,
     ResultMessage,
     TextBlock,
     ToolResultBlock,
@@ -132,12 +134,15 @@ Follow this workflow exactly:
    - endpoint: {config.MONID_ENDPOINT!r}
    - input: {_SEARCH_RECIPE_BODY!r}
    `monid_run` is asynchronous — after starting it, poll `monid_get_run` with the returned
-   run id until the run reports completion, then take its output (a list of raw postings).
+   run id until the run reports completion.
 
-3. Call `filter_jobs` on that raw output. It normalizes postings, dedupes by id, and keeps
-   only Israel-located ones — treat its return value as the job list to work through.
+3. The completed run's result arrives ALREADY REDUCED for you: postings are normalized,
+   deduped by id, and filtered down to Israel-located roles only. It is an object with
+   `window` (the posting-age window this search used), `fetched`, `kept`,
+   `dropped_duplicate`, `dropped_non_israel`, and `jobs`. Work through `jobs`. Do not try
+   to re-filter or re-dedupe it, and do not look for a `filter_jobs` tool — there is none.
 
-4. For EACH job in that filtered list:
+4. For EACH job in `jobs`:
    a. Judge fit yourself using the rubric below (you replace `scoring.py`'s job): decide
       `is_junior_friendly`, `fit_score` (0-100), `match_kind` ("direct" or "stretch"), and a
       one-sentence `reason`.
@@ -153,10 +158,11 @@ Follow this workflow exactly:
       refuses below-threshold jobs as a backstop, but do not rely on that backstop: only
       call it for jobs you have already judged to clear the bar.
 
-5. When every job has been judged, report a final summary: how many jobs were considered,
-   how many résumés were written (and to which companies/titles), how many were skipped and
-   why, and any corrections `write_resume` reported (e.g. stripped skills, repaired entry
-   coverage).
+5. When every job has been judged, report a final summary: the `window` the search covered,
+   how many jobs were fetched vs kept (`fetched`, `kept`, `dropped_duplicate`,
+   `dropped_non_israel`), how many résumés were written (and to which companies/titles),
+   how many were skipped and why, and any corrections `write_resume` reported (e.g.
+   stripped skills, repaired entry coverage).
 
 --- Fit-scoring rubric (judgment point one — replaces scoring.py) ---
 {SCORING_RUBRIC}
@@ -198,7 +204,6 @@ def build_options() -> "ClaudeAgentOptions":
             "mcp__monid__monid_get_run",
             "mcp__monid__monid_balance",
             "mcp__resume_tools__get_resume",
-            "mcp__resume_tools__filter_jobs",
             "mcp__resume_tools__write_resume",
         ],
         permission_mode="dontAsk",
@@ -207,6 +212,14 @@ def build_options() -> "ClaudeAgentOptions":
         # text+HTML descriptions) can exceed the SDK's 1MB default message buffer;
         # raise it so the completed monid_get_run result fits through the pipe.
         max_buffer_size=10 * 1024 * 1024,  # 10MB
+        # The raw harvestapi scrape (~1.1MB, ~284K tokens) never reaches the
+        # model: this hook reduces it in-process to the jobs we actually need.
+        hooks={
+            "PostToolUse": [
+                HookMatcher(matcher="mcp__monid__monid_get_run",
+                            hooks=[hooks.reduce_monid_output]),
+            ],
+        },
     )
 
 
