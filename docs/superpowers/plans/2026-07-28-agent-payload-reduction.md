@@ -605,3 +605,49 @@ git commit --allow-empty -m "chore: first live agent run - <N> résumés; <obser
 - **Spec coverage:** reducer with dedupe + Israel filter + field projection and descriptions kept in full (Task 1) ✓; envelope with `window`/`fetched`/`kept`/`dropped_duplicate`/`dropped_non_israel`, counts derived without changing `clean_jobs` (Task 1, Step 3) ✓; `window` read from `run["input"]["body"]["postedLimit"]` with a `null` fallback (Task 1 `_window` + `test_window_missing_is_null_not_fatal`) ✓; every error-handling case from the spec — non-terminal status, FAILED/BLOCKED, malformed, reducer raises, missing `postedLimit` — has a test (Task 1) ✓; hook returns `updatedToolOutput` as a content-block array (Task 2) ✓; `filter_jobs` deleted with no dangling refs (Task 3, Step 7) ✓; `max_buffer_size` retained and asserted (Task 3, Step 1) ✓; `posted_date` preservation tested (Task 1) ✓; `POSTED_LIMIT` untouched in `config.py`, so the week→24h knob still works ✓; live verification (Task 4) ✓. `geoIds`, `industryIds`, query consolidation, description compression, and the daily-phase seen-ID store are out of scope per the spec and appear in no task ✓.
 - **Placeholder scan:** every code step carries complete, runnable content — no "add error handling", no "similar to Task N", no TBDs. The two judgment-based verifications (Task 4 Steps 3-4) are live-observation checklists with concrete things to look for, which is the honest form for a live run.
 - **Type consistency:** `reduce_run_payload(tool_response) -> str | None` is defined in Task 1 and consumed identically in Task 2's `hooks.reduce_monid_output`, which checks `is None` for pass-through exactly as Task 1 specifies. `clean_jobs(list) -> list[dict]` is used with its existing unchanged signature. `hooks.reduce_monid_output` is registered in Task 3 under the name Task 2 defines. The envelope key names (`window`, `fetched`, `kept`, `dropped_duplicate`, `dropped_non_israel`, `jobs`) are identical in Task 1's implementation, Task 1's tests, Task 2's tests, and Task 3's workflow instructions.
+
+---
+
+## Task 4 outcome and Task 5 (added 2026-07-28, after the first live run)
+
+**Task 4 ran and FAILED at its purpose.** The session completed (exit 0, 7 résumés written,
+`24h` window), but **the reduction never ran**. Task 4's Step 3 checks are exactly what
+caught it: no `[reduce]` line, and `descriptionHtml` present in the transcript.
+
+Root cause, evidenced not inferred: **the CLI's MCP output-size guard runs before
+PostToolUse hooks.** The hook received a 1,629-char `exceeds maximum allowed tokens ...
+saved to <file>` stub instead of JSON, `json.loads` failed, `reduce_run_payload` returned
+`None` **silently**, and the raw payload passed through. The agent then hand-parsed the
+offloaded 787KB file: 216 `Grep` + 9 `Bash` + 3 sub-`Agent` calls, 256 tool calls, **$7.19**.
+
+The step-3 fallback prose added during the final-review fix wave worked as written — the
+agent recognised a raw run object and filtered it itself — which is why the run produced
+correct output and looked successful. **The safety net masked the failure.**
+
+### Task 5: the fix (commit `d35b09a`)
+
+1. `config.MAX_MCP_OUTPUT_TOKENS = "500000"`, passed via `ClaudeAgentOptions.env`, so the
+   full payload reaches the hook. `max_buffer_size` is a *different* limit; both are needed.
+2. `disallowed_tools` — `allowed_tools` only PRE-APPROVES, it does not restrict. Without
+   this, any future reduction failure degrades into another expensive hand-parse instead of
+   failing loudly.
+3. **Every** `return None` in `reduce_run_payload` now logs. The silence is what made a
+   total feature failure invisible for a whole run.
+
+**Verified end-to-end** against the real `agent.build_options()` on a completed run (free
+re-read, no scrape): `[reduce] window=24h fetched=79 kept=27 dropped_duplicate=13
+dropped_non_israel=39`, model saw only envelope keys, no forbidden tools used, no raw
+leakage. 70/70 tests pass.
+
+### Still outstanding
+
+A **fresh live scrape** has not been run with the fix in place — the Monid balance
+($0.0855) is below the ~$0.12 cost of a 24h run. Top up, then re-run Task 4's Steps 2-5.
+The free completed-run re-read exercises the whole chain except the initial `monid_run`
+and the judge/tailor loop.
+
+### Process lesson
+
+The original spike verified the hook contract using `monid_balance` — a tiny payload — and
+the spec recorded the mechanism as "verified live". **A spike that does not exercise the
+property under design (here, payload size) has not cleared the risk it was run to clear.**

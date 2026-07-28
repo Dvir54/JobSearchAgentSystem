@@ -198,6 +198,9 @@ def build_options() -> "ClaudeAgentOptions":
       origin of a real defect: when the reduction hook failed silently, the agent used
       Bash/Grep/Agent to hand-parse the raw payload instead — 256 tool calls, $7.19 in
       one run. `disallowed_tools` is what actually restricts them.
+      NOTE: the SDK's own docstring (claude_agent_sdk/types.py:1817) claims dontAsk will
+      "deny if not pre-approved". That is false for built-in tools — measured, not
+      assumed. Do not revert this comment to match the SDK docs.
     - `max_turns` is generous: the reference doc's spike showed the CLI defers MCP tool
       schemas behind its own `ToolSearch`, burning extra turns before real tool calls even
       start, and this session judges/tailors many jobs in a loop.

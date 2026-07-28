@@ -69,6 +69,45 @@ Type source: `claude_agent_sdk/types.py:423-436`, `updatedToolOutput` — *"Repl
 output before it is sent to the model."* Wiring: `ClaudeAgentOptions.hooks:
 dict[HookEvent, list[HookMatcher]]` (`types.py:1947`).
 
+### CORRECTION (2026-07-28, after the first live run)
+
+**The spike above was run against `monid_balance`, whose payload is tiny. It therefore
+verified the hook contract but never exercised the behaviour that actually mattered:
+what happens at size.** The first live run exposed two facts that invalidate the naive
+reading of the table above.
+
+**1. The CLI's MCP output-size guard runs BEFORE PostToolUse hooks.** For the real
+774,006-char `monid_get_run` result, the hook did not receive JSON. It received a
+1,629-char stub:
+
+```
+Error: result (774,006 characters) exceeds maximum allowed tokens. Output has been
+saved to ...\tool-results\mcp-monid-monid_get_run-1785256341558.txt.
+Format: JSON with schema: {runId: stri...
+```
+
+`json.loads` failed, `reduce_run_payload` returned `None`, the hook passed the payload
+through, and the agent parsed the offloaded 787KB file by hand — 216 `Grep` + 9 `Bash` +
+3 sub-`Agent` calls, 256 tool calls, **$7.19**. The reduction never ran.
+
+**Required:** `env={"MAX_MCP_OUTPUT_TOKENS": config.MAX_MCP_OUTPUT_TOKENS}` on
+`ClaudeAgentOptions`. Verified: with the cap raised, the hook receives all 773,981 chars
+and reduces 79 fetched → 27 kept. `max_buffer_size` is a *separate* limit — both are
+needed.
+
+**2. `allowed_tools` does not restrict built-in tools; it only pre-approves them.** The
+agent retained `Bash`, `Grep`, `Glob`, `Read`, `PowerShell`, and `Agent`, which is how it
+routed around the failed reduction. **Required:** `disallowed_tools`
+(`claude_agent_sdk/types.py:1847`).
+
+Note the SDK's own docstring for `permission_mode` (`types.py:1817`) states
+`"dontAsk" — Don't prompt for permissions; deny if not pre-approved`. That is
+**empirically false** for built-in tools, as the $7.19 run demonstrates. Do not "correct"
+`agent.py`'s comment back to match the SDK docs.
+
+**Process lesson:** a spike that does not exercise the property under design — here,
+payload size — has not cleared the risk it was run to clear.
+
 ## Architecture
 
 A `PostToolUse` hook matched to `mcp__monid__monid_get_run` intercepts the run result
