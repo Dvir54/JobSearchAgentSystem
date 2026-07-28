@@ -297,9 +297,12 @@ def test_returns_updated_tool_output_as_a_content_block_array():
     assert json.loads(blocks[0]["text"])["kept"] == 1
 
 
-def test_does_not_use_the_wrapped_content_shape():
+def test_output_is_not_the_wrapped_content_shape():
     out = _call(_completed([_raw("1", "Israel")]))
-    assert "content" not in out["hookSpecificOutput"]["updatedToolOutput"]
+    blocks = out["hookSpecificOutput"]["updatedToolOutput"]
+    # {"content": [...]} is what the CLI rejects with "e.reduce is not a function"
+    assert not isinstance(blocks, dict)
+    assert all(set(b) == {"type", "text"} for b in blocks)
 
 
 def test_still_running_returns_no_replacement():
