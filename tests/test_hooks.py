@@ -46,7 +46,9 @@ def test_output_is_not_the_wrapped_content_shape():
     assert all(set(b) == {"type", "text"} for b in blocks)
 
 
-def test_still_running_returns_no_replacement():
+def test_still_running_returns_no_replacement(monkeypatch):
+    # _sleep_spy keeps the poll-pacing sleep from making the suite wait 3s for real.
+    _sleep_spy(monkeypatch)
     out = _call(json.dumps({"runId": "01TEST", "status": "RUNNING"}))
     assert out == {}
 
@@ -58,3 +60,44 @@ def test_failed_run_returns_no_replacement():
 
 def test_garbage_returns_no_replacement():
     assert _call("not json") == {}
+
+
+def _sleep_spy(monkeypatch):
+    """Record asyncio.sleep calls instead of actually sleeping."""
+    slept = []
+
+    async def fake_sleep(seconds):
+        slept.append(seconds)
+
+    monkeypatch.setattr(hooks.asyncio, "sleep", fake_sleep)
+    return slept
+
+
+def test_paces_the_poll_loop_while_the_run_is_in_progress(monkeypatch):
+    # The agent has no wait tool (Bash is disallowed), so an unpaced RUNNING poll
+    # spins through its turn budget. The hook sleeps on its behalf.
+    slept = _sleep_spy(monkeypatch)
+    out = _call(json.dumps({"runId": "01TEST", "status": "RUNNING"}))
+    assert out == {}
+    assert slept == [hooks.POLL_PACING_SECONDS]
+
+
+def test_does_not_pace_on_a_terminal_failure(monkeypatch):
+    # FAILED is terminal: the agent should see the error immediately, not after a wait.
+    slept = _sleep_spy(monkeypatch)
+    assert _call(json.dumps({"runId": "01TEST", "status": "FAILED"})) == {}
+    assert slept == []
+
+
+def test_does_not_pace_on_an_unparseable_payload(monkeypatch):
+    # The oversized-stub case: not a run object, so there is nothing to wait for.
+    slept = _sleep_spy(monkeypatch)
+    assert _call("Error: result (774,006 characters) exceeds maximum allowed tokens.") == {}
+    assert slept == []
+
+
+def test_does_not_pace_when_the_run_completed(monkeypatch):
+    slept = _sleep_spy(monkeypatch)
+    out = _call(_completed([_raw("1", "Tel Aviv, Israel")]))
+    assert out["hookSpecificOutput"]["updatedToolOutput"]
+    assert slept == []

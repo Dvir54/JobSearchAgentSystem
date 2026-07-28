@@ -131,6 +131,31 @@ def _window(run):
     return body.get("postedLimit")
 
 
+# Monid's own terminal set, per the monid_get_run tool description: "Poll every few
+# seconds until status is terminal (COMPLETED, FAILED, BLOCKED, TIMED_OUT)."
+TERMINAL_STATUSES = frozenset({"COMPLETED", "FAILED", "BLOCKED", "TIMED_OUT",
+                               "STOPPED", "CANCELLED"})
+
+
+def is_run_in_progress(tool_response):
+    """True when this payload is a Monid run that has NOT reached a terminal status —
+    i.e. the agent is mid-poll and will immediately call `monid_get_run` again.
+
+    Used only to pace that poll loop. A wrong answer here costs a few seconds of
+    wall time, never correctness, so this stays deliberately tolerant and never
+    raises. It parses independently of `reduce_run_payload` on purpose: that
+    function is verified working and is not worth refactoring for six lines.
+    """
+    try:
+        run = tool_response if isinstance(tool_response, dict) else json.loads(tool_response)
+    except (TypeError, ValueError):
+        return False
+    if not isinstance(run, dict):
+        return False
+    status = run.get("status")
+    return status is not None and status not in TERMINAL_STATUSES
+
+
 def reduce_run_payload(tool_response):
     """Reduce a `monid_get_run` payload to the jobs the agent actually needs.
 
