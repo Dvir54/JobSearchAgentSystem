@@ -31,7 +31,7 @@ MONID_ENDPOINT = "/harvestapi/linkedin-job-search"
 # Search filters sent to harvestapi (Layer 1 — coarse). Claude scoring is Layer 2.
 LOCATION = "Israel"
 EXPERIENCE_LEVELS = ["internship", "entry", "associate"]
-POSTED_LIMIT = "week"          # interim window for tuning; becomes "24h" in the daily phase
+POSTED_LIMIT = "24h"           # daily window; was "week" during interim tuning
 MAX_ITEMS_PER_QUERY = 25       # harvestapi bills per result; maxItems per jobTitle x location
 
 # Keep only postings whose location text contains this (case-insensitive). The
