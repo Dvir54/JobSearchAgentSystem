@@ -1,7 +1,9 @@
 """Deterministic tooling behind the agent's tools. No claude_agent_sdk import —
 this stays unit-testable without the SDK or any agent run.
 """
+import json
 import re
+import sys
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -121,3 +123,58 @@ def write_tailored_resume(job, score, tailored, out_dir=None):
     path = out_dir / safe_filename(job["company"], job["title"])
     path.write_text(content, encoding="utf-8")
     return {"written": str(path), "rejected": False, "reason": "", "corrections": notes}
+
+
+def _window(run):
+    """The posting-age window Monid echoes back from the input that actually ran."""
+    body = (run.get("input") or {}).get("body") or {}
+    return body.get("postedLimit")
+
+
+def reduce_run_payload(tool_response):
+    """Reduce a `monid_get_run` payload to the jobs the agent actually needs.
+
+    Returns the reduced envelope as JSON text, or None meaning "pass the original
+    through untouched". None is returned for every case this cannot fully vouch
+    for: a non-COMPLETED run (the agent is still polling, or needs to see a real
+    error), an unparseable or unexpected shape, or a reducer failure. A failed
+    optimisation must degrade to today's behaviour, never to a silent empty result.
+    """
+    if isinstance(tool_response, dict):
+        run = tool_response
+    else:
+        try:
+            run = json.loads(tool_response)
+        except (TypeError, ValueError):
+            return None
+
+    if not isinstance(run, dict) or run.get("status") != "COMPLETED":
+        return None
+
+    items = run.get("output")
+    if not isinstance(items, list):
+        return None
+
+    try:
+        jobs = clean_jobs(items)
+    except Exception as exc:                      # noqa: BLE001 - degrade, never crash the run
+        print(f"[reduce] clean_jobs failed ({exc!r}); passing raw output through",
+              file=sys.stderr)
+        return None
+
+    fetched = len(items)
+    unique = len({str(i.get("id")) for i in items if isinstance(i, dict)})
+    kept = len(jobs)
+    envelope = {
+        "window": _window(run),
+        "fetched": fetched,
+        "kept": kept,
+        "dropped_duplicate": fetched - unique,
+        "dropped_non_israel": unique - kept,
+        "jobs": jobs,
+    }
+    print(f"[reduce] run={run.get('runId')} window={envelope['window']} "
+          f"fetched={fetched} kept={kept} "
+          f"dropped_duplicate={envelope['dropped_duplicate']} "
+          f"dropped_non_israel={envelope['dropped_non_israel']}", file=sys.stderr)
+    return json.dumps(envelope, ensure_ascii=False)
