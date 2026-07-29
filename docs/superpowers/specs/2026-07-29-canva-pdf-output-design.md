@@ -149,28 +149,43 @@ surfaced; bold was not). So the code cannot detect which regions are bold. It mu
 
 - **`replace` mode** — no inline formatting. One `replace_text` with the full new text.
   Applies to skills, bullets, entry titles, dates, and project tech lines.
-- **`regions` mode** — has inline formatting. The map records which region **indices** are
-  editable; each is rewritten with `find_and_replace_text`, and every other region is left
-  byte-for-byte untouched. Applies to the About Me summary.
+- **`regions` mode** — has inline formatting. Each region is rewritten with its own
+  `find_and_replace_text`. Formatting is attached to the **region**, not to the words, so
+  rewriting a bold region yields new text that is still bold. Applies to the About Me
+  summary.
 
-**The constraint this imposes, stated plainly:** in `regions` mode the formatted spans are
-**fixed anchors**. For the summary that means *"IBM Research internship"* and *"junior
-software engineering"* stay verbatim in every tailored version, and the agent rewrites only
-the plain text around them. That is a genuine reduction in how freely the summary can be
-tailored — accepted deliberately, because keeping the original formatting was a stated
-requirement.
+**The summary is freely tailored — every region is editable**, matching today's markdown
+behaviour where the summary is rewritten per job. The agent chooses what goes in the bold
+slots, so emphasis is tailored too. (Today's `.md` renders the summary entirely plain, so
+this is a small improvement on current output, not a regression.)
 
-The CV-editor rules must state this, or the agent will draft summaries that cannot be
-applied.
+**The one constraint:** the summary must keep its **five-region shape** —
+`plain, EMPHASIS, plain, EMPHASIS, plain`. The agent writes new content for each region but
+cannot collapse the summary into a single blob, or the bold has nothing to attach to. The
+CV-editor rules must state this shape explicitly, with the region roles described, or the
+agent will draft summaries that cannot be applied.
+
+Two implementation details this forces:
+
+- `find_and_replace_text` matches on the **current** text of a region, so the operations
+  for one element must use each region's exact existing text as `find_text`, and the batch
+  must not create a situation where one replacement's output becomes another's `find_text`.
+  Build all five operations from the pre-edit snapshot and reject a plan where any
+  `replace_text` value contains another region's `find_text`.
+- Region texts in this design are distinct, so `find_and_replace_text` cannot ambiguously
+  match. Run-start validation asserts that; a template whose summary regions are not
+  distinct is rejected rather than silently mis-edited.
 
 ## Element map
 
 Pinned in `config.py`, keyed to the template design. Verified live:
 
 ```
-summary        regions  PB5prZGGYdD17M0v-LBrJ8LlFHVgPZm7d   editable regions [0, 2, 4]
-                        (regions [1] "IBM Research internship" and
-                         [3] "junior software engineering" are bold — fixed anchors)
+summary        regions  PB5prZGGYdD17M0v-LBrJ8LlFHVgPZm7d   all 5 regions editable
+                        shape: [0] plain, [1] BOLD, [2] plain, [3] BOLD, [4] plain
+                        (currently: "Final-semester … through an " / "IBM Research
+                         internship" / ". Seeking a " / "junior software engineering" /
+                         " role to start contributing immediately.")
 skills         replace  PB5prZGGYdD17M0v-LBkVtV7y5fKZMm0H   newline-separated
 experience[0]  replace  title   PB5prZGGYdD17M0v-LB6dWjhqhy865bfK
                         date    PB5prZGGYdD17M0v-LBm83fB0jYRwNXp0
@@ -237,7 +252,7 @@ metadata formatting survives, relocated into the index writer.
 | `canva.py` *(new)* | Deterministic, SDK-free: build `replace_text` / `find_and_replace_text` operations from the edit plan, compute the slack table from a design's elements, detect overflow from returned dimensions, parse export/download responses. Fully unit-testable. |
 | `tooling.py` | `write_tailored_resume` → `prepare_resume`: same gate and guards, returns `{element_id: text}` + corrections instead of writing markdown. Adds the length budget. |
 | `hooks.py` | Second hook: `PreToolUse` on `perform-editing-operations`, enforcing guards on what is actually sent. |
-| `agent.py` | Canva MCP in `mcp_servers`; Canva tools in `allowed_tools`; `WORKFLOW` rewritten for the per-job sequence, the overflow-redraft loop, and the folder step. **`CV_EDITOR_RULES` gains the fixed-anchor constraint** for the summary and drops the reorder instruction. |
+| `agent.py` | Canva MCP in `mcp_servers`; Canva tools in `allowed_tools`; `WORKFLOW` rewritten for the per-job sequence, the overflow-redraft loop, and the folder step. **`CV_EDITOR_RULES` gains the five-region summary shape** (two of the five regions are the emphasised phrases) and drops the reorder instruction. The summary stays freely tailored, as today. |
 | `render.py` | Résumé rendering deleted; metadata rendering becomes the index writer. |
 | `tools.py` | `write_resume` tool replaced by `prepare_resume`. |
 | `tests/` | `canva.py` unit tests with stubbed payloads (including a real captured `start-editing-transaction` response); guard-hook tests; index-writer tests. |
