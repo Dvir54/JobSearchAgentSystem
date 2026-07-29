@@ -56,8 +56,9 @@ Two consequences worth stating plainly:
 
 1. **Element IDs surviving `copy-design` means a static element map works for every job.**
    No per-copy re-discovery.
-2. **`find_and_replace_text` is the formatting-safe write path.** `replace_text` is only
-   safe for blocks with no inline formatting.
+2. **`find_and_replace_text` is the formatting-safe write path**, but it is not used —
+   see "One write mode" below. It is recorded here so the option is known if inline
+   emphasis is ever wanted back.
 
 ## Architecture
 
@@ -68,7 +69,7 @@ copy-design(template)            → new design_id (element ids identical)
   ↓
 start-editing-transaction        → returns element list + dimensions
   ↓
-perform-editing-operations       → find_and_replace_text / replace_text per element
+perform-editing-operations       → one replace_text per mapped element
   ↳ PreToolUse hook: guards vs base_cv.md → repair via updatedInput, or deny
   ↓
 OVERFLOW CHECK on the returned dimensions  → cancel + redraft if any block grew too tall
@@ -124,9 +125,10 @@ Overflow is the *default* outcome without a check, not an edge case.
 
 **Two-layer defence:**
 
-- **Prevention — length budget.** `prepare_resume` rejects or trims any rewritten block
-  exceeding ~95% of the original's character count. Deterministic, cheap, catches most cases
-  before a single API call.
+- **Prevention — length budget.** `prepare_resume` rejects any rewritten block exceeding
+  `LENGTH_BUDGET_RATIO` (1.05) times the original's character count. Deterministic, cheap,
+  catches gross overruns before a single API call. Note it must stay **above 1.0**:
+  reordering skills is length-preserving, so a sub-1.0 ratio would reject every run.
 - **Detection — height read-back.** `perform-editing-operations` returns *recomputed*
   `dimension.height` for every element **before commit**. Compare each edited element's new
   bottom edge against the top of the next element below it in the same column. If any
@@ -137,78 +139,37 @@ Overflow is the *default* outcome without a check, not an edge case.
 The slack table is computed **once per run from the template design**, not hardcoded, so it
 stays correct if the résumé layout changes.
 
-## Two write modes — and the constraint that follows
+## One write mode: `replace_text`
 
-`replace_text` overwrites a whole element and **flattens inline formatting**;
-`find_and_replace_text` swaps a substring and **preserves it**. So elements split into
-multiple regions cannot be rewritten wholesale without losing their bold.
+Every mapped element — summary, skills, and each entry's bullets — is written with a single
+`replace_text` carrying the full new text.
 
-The API reports a text element as an ordered list of `regions`, split wherever formatting
-changes — but it does **not** report *which* formatting applies (only `link` was ever
-surfaced; bold was not). So the code cannot detect which regions are bold. It must be told.
+**The agent's output is unchanged from today.** The summary is a plain tailored paragraph
+connected to both the base CV and the job, exactly as `tailor_cv` produces now. No new
+structure, no markup, no Canva detail leaking into `CV_EDITOR_RULES`.
 
-**Therefore each mapped element declares a write mode:**
+**What this costs, stated plainly:** `replace_text` flattens *inline* formatting, so the two
+phrases currently bolded inside the About Me paragraph render at normal weight. That is
+accepted deliberately — preserving them would require the agent to mark up its prose, which
+is not worth the complexity for two bold phrases.
 
-- **`replace` mode** — no inline formatting. One `replace_text` with the full new text.
-  Applies to skills, bullets, entry titles, dates, and project tech lines.
-- **`regions` mode** — has inline formatting. Each region is rewritten with its own
-  `find_and_replace_text`. Formatting is attached to the **region**, not to the words, so
-  rewriting a bold region yields new text that is still bold. Applies to the About Me
-  summary.
+**What it does not cost:** block-level formatting is fully preserved — verified live. The
+skills list came back still bulleted and styled after a `replace_text`, and font, size,
+colour, alignment and spacing were all retained. Every untouched section (Contact,
+Volunteering, Languages, Military Service, Education), every heading, and every icon is
+unaffected because the pipeline never writes to them.
 
-  **Verified live**, not inferred: replacing the bold regions
-  `"IBM Research internship" → "IBM Research security-LLM pipeline"` and
-  `"junior software engineering" → "junior backend engineering"`, together with a plain
-  region, in one batched call — all three succeeded, both new phrases rendered **bold**, the
-  element kept its 5-region structure, and its height was unchanged.
-
-**The summary is freely tailored — every region is editable**, matching today's markdown
-behaviour where the summary is rewritten per job. The agent chooses what goes in the bold
-slots, so emphasis is tailored too. (Today's `.md` renders the summary entirely plain, so
-this is a small improvement on current output, not a regression.)
-
-**The agent writes the summary as ONE paragraph, not as five strings.** Requiring five
-separate strings would leak a Canva implementation detail into the CV-editor rules and make
-the prose harder to write well. Instead the agent marks the two phrases worth emphasising
-with `**…**` — the notation it already uses — and `canva.split_emphasis()` turns that single
-string into the five regions deterministically:
-
-```
-"Final-semester CS student at Ben-Gurion University with **backend Python**
- experience from an IBM Research internship. Seeking a **junior backend
- engineering** role."
-   → ["Final-semester CS student … with ", "backend Python",
-      " experience from an IBM Research internship. Seeking a ",
-      "junior backend engineering", " role."]
-```
-
-**The one content rule:** exactly two `**…**` spans, neither at the very start nor the very
-end, so the `plain / BOLD / plain / BOLD / plain` shape holds and no region comes out empty.
-A summary that does not satisfy this is rejected by `prepare_resume` with an actionable
-message; the shape itself never appears in the CV-editor rules as a "five strings"
-instruction.
-
-Two implementation details this forces:
-
-- `find_and_replace_text` matches on the **current** text of a region, so the operations
-  for one element must use each region's exact existing text as `find_text`, and the batch
-  must not create a situation where one replacement's output becomes another's `find_text`.
-  Build all five operations from the pre-edit snapshot and reject a plan where any
-  `replace_text` value contains another region's `find_text`.
-- Region texts in this design are distinct, so `find_and_replace_text` cannot ambiguously
-  match. Run-start validation asserts that; a template whose summary regions are not
-  distinct is rejected rather than silently mis-edited.
+`find_and_replace_text` was verified to preserve inline bold — including when the bold
+region itself is rewritten — and is recorded in the spike table above. It is **not used**:
+that path exists only if inline emphasis is ever wanted back, and taking it would mean the
+agent marking up its prose, which this design deliberately avoids.
 
 ## Element map
 
 Pinned in `config.py`, keyed to the template design. Verified live:
 
 ```
-summary        regions  PB5prZGGYdD17M0v-LBrJ8LlFHVgPZm7d   all 5 regions editable
-                        shape: [0] plain, [1] BOLD, [2] plain, [3] BOLD, [4] plain
-                        (currently: "Final-semester … through an " / "IBM Research
-                         internship" / ". Seeking a " / "junior software engineering" /
-                         " role to start contributing immediately.")
+summary        replace  PB5prZGGYdD17M0v-LBrJ8LlFHVgPZm7d   plain paragraph
 skills         replace  PB5prZGGYdD17M0v-LBkVtV7y5fKZMm0H   newline-separated
 experience[0]  replace  title   PB5prZGGYdD17M0v-LB6dWjhqhy865bfK
                         date    PB5prZGGYdD17M0v-LBm83fB0jYRwNXp0
@@ -272,10 +233,10 @@ metadata formatting survives, relocated into the index writer.
 | File | Change |
 |---|---|
 | `config.py` | `CANVA_TEMPLATE_DESIGN_ID`, `CANVA_ELEMENT_MAP`, `CANVA_FOLDER_PREFIX`, `MAX_REDRAFT_ATTEMPTS = 2`, `LENGTH_BUDGET_RATIO = 0.95` |
-| `canva.py` *(new)* | Deterministic, SDK-free: build `replace_text` / `find_and_replace_text` operations from the edit plan, compute the slack table from a design's elements, detect overflow from returned dimensions, parse export/download responses. Fully unit-testable. |
+| `canva.py` *(new)* | Deterministic, SDK-free: build `replace_text` operations from the edit plan, compute the slack table from a design's elements, detect overflow from returned dimensions, parse export/download responses. Fully unit-testable. |
 | `tooling.py` | `write_tailored_resume` → `prepare_resume`: same gate and guards, returns `{element_id: text}` + corrections instead of writing markdown. Adds the length budget. |
 | `hooks.py` | Second hook: `PreToolUse` on `perform-editing-operations`, enforcing guards on what is actually sent. |
-| `agent.py` | Canva MCP in `mcp_servers`; Canva tools in `allowed_tools`; `WORKFLOW` rewritten for the per-job sequence, the overflow-redraft loop, and the folder step. **`CV_EDITOR_RULES` gains the five-region summary shape** (two of the five regions are the emphasised phrases) and drops the reorder instruction. The summary stays freely tailored, as today. |
+| `agent.py` | Canva MCP in `mcp_servers`; Canva tools in `allowed_tools`; `WORKFLOW` rewritten for the per-job sequence, the overflow-redraft loop, and the folder step. **`CV_EDITOR_RULES` is unchanged for the summary** and drops only the reorder instruction. The summary stays a freely tailored plain paragraph, as today. |
 | `render.py` | Résumé rendering deleted; metadata rendering becomes the index writer. |
 | `tools.py` | `write_resume` tool replaced by `prepare_resume`. |
 | `tests/` | `canva.py` unit tests with stubbed payloads (including a real captured `start-editing-transaction` response); guard-hook tests; index-writer tests. |

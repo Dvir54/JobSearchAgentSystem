@@ -14,8 +14,9 @@
 
 - **Only jobs that are junior-friendly AND `fit_score >= config.FIT_THRESHOLD` (70)** get a copy, edits, or a PDF. Everything else is judged and skipped.
 - **`base_cv.md` stays the content source of truth.** The truthfulness guards (`strip_invented_skills`, `repair_entry_coverage`) are unchanged and still diff against it.
-- **Two write modes.** `replace` → one `replace_text` with full new text (skills, bullets). `regions` → one `find_and_replace_text` per region, preserving inline formatting (summary only).
-- **The agent writes the summary as ONE paragraph**, marking the two phrases to emphasise with `**…**`. `canva.split_emphasis()` turns it into the five regions `plain, BOLD, plain, BOLD, plain`. The five-region structure is an implementation detail and must never appear in `CV_EDITOR_RULES` as a "return five strings" instruction.
+- **One write mode: `replace_text`.** Every mapped element — summary, skills, each entry's bullets — is written with a single `replace_text` carrying the full new text.
+- **The agent's tailored output is unchanged from today.** The summary is a plain paragraph connected to the base CV and the job, exactly as now. No new structure, no markup. `CV_EDITOR_RULES` must not gain any Canva-specific instruction.
+- **Accepted cost:** `replace_text` flattens inline formatting, so the two bolded phrases inside the About Me paragraph render at normal weight. Block-level formatting (bullets, font, size, colour, alignment) is preserved — verified live.
 - **Verified live and not to be re-litigated:** PDF export works on Free; element ids are stable and survive `copy-design`; `find_and_replace_text` preserves inline bold, including when the bold region itself is rewritten; batched operations on one element succeed; the Agent SDK reaches the Canva MCP headlessly; `perform-editing-operations` returns recomputed element heights **before** commit.
 - **Overflow is enforced by the height check**, not by the length budget. Canva does not reflow; three blocks have under 10px of slack.
 - **`canva.py`, `tooling.py`, `hooks.py` stay SDK-free** (no `claude_agent_sdk` import). Only `agent.py` imports it.
@@ -142,37 +143,16 @@ def test_capacity_is_infinite_for_the_lowest_element():
 
 def test_validate_map_passes_when_all_ids_present():
     els = parse_elements(sample_richtexts())
-    element_map = {
-        "summary": {"mode": "regions", "element_id": f"{PAGE}-LBrJ8LlFHVgPZm7d", "regions": 5},
-        "skills": {"mode": "replace", "element_id": f"{PAGE}-LBkVtV7y5fKZMm0H"},
-    }
+    element_map = {"summary": f"{PAGE}-LBrJ8LlFHVgPZm7d",
+                   "skills": f"{PAGE}-LBkVtV7y5fKZMm0H"}
     assert validate_map(els, element_map, [f"{PAGE}-LB1PgdLj3TKLYW0G"]) == []
 
 
 def test_validate_map_reports_missing_element_id():
     els = parse_elements(sample_richtexts())
-    element_map = {"skills": {"mode": "replace", "element_id": f"{PAGE}-GONE"}}
-    problems = validate_map(els, element_map, [])
+    problems = validate_map(els, {"skills": f"{PAGE}-GONE"}, [])
     assert len(problems) == 1
     assert "GONE" in problems[0] and "skills" in problems[0]
-
-
-def test_validate_map_reports_wrong_region_count():
-    els = parse_elements(sample_richtexts())
-    element_map = {"summary": {"mode": "regions",
-                               "element_id": f"{PAGE}-LBrJ8LlFHVgPZm7d", "regions": 3}}
-    problems = validate_map(els, element_map, [])
-    assert len(problems) == 1
-    assert "region" in problems[0].lower()
-
-
-def test_validate_map_reports_non_distinct_regions():
-    # find_and_replace_text would match ambiguously if two regions were identical.
-    rts = [_rt("LBdupe", 10, 300, 400, 20, ["same", "other", "same"])]
-    els = parse_elements(rts)
-    element_map = {"summary": {"mode": "regions", "element_id": f"{PAGE}-LBdupe", "regions": 3}}
-    problems = validate_map(els, element_map, [])
-    assert any("distinct" in p.lower() for p in problems)
 
 
 def test_validate_map_reports_missing_validate_only_id():
@@ -205,13 +185,12 @@ def _el(suffix):
     return f"{CANVA_PAGE_ID}-{suffix}"
 
 
-# Slots the pipeline writes. "regions" mode preserves inline formatting by
-# replacing each region separately; "replace" mode overwrites the whole element.
+# Slots the pipeline writes, each overwritten wholesale with replace_text.
 CANVA_ELEMENT_MAP = {
-    "summary": {"mode": "regions", "element_id": _el("LBrJ8LlFHVgPZm7d"), "regions": 5},
-    "skills": {"mode": "replace", "element_id": _el("LBkVtV7y5fKZMm0H")},
-    "experience.0.bullets": {"mode": "replace", "element_id": _el("LBk2rXZgbWWq75bp")},
-    "experience.1.bullets": {"mode": "replace", "element_id": _el("LBzpBGcBgpx9yCWC")},
+    "summary": _el("LBrJ8LlFHVgPZm7d"),
+    "skills": _el("LBkVtV7y5fKZMm0H"),
+    "experience.0.bullets": _el("LBk2rXZgbWWq75bp"),
+    "experience.1.bullets": _el("LBzpBGcBgpx9yCWC"),
 }
 
 # Never written — mapped only so run-start validation detects layout drift.
@@ -298,22 +277,9 @@ def validate_map(elements, element_map, validate_only_ids):
     content would land in the wrong box — abort rather than guess.
     """
     problems = []
-    for slot, spec in (element_map or {}).items():
-        eid = spec["element_id"]
-        element = elements.get(eid)
-        if element is None:
+    for slot, eid in (element_map or {}).items():
+        if eid not in elements:
             problems.append(f"slot {slot!r}: element_id {eid!r} not found in the design")
-            continue
-        if spec["mode"] == "regions":
-            expected = spec["regions"]
-            actual = len(element["regions"])
-            if actual != expected:
-                problems.append(
-                    f"slot {slot!r}: expected {expected} regions, found {actual}")
-            elif len(set(element["regions"])) != actual:
-                problems.append(
-                    f"slot {slot!r}: regions are not distinct — find_and_replace_text "
-                    f"would match ambiguously")
     for eid in validate_only_ids or []:
         if eid not in elements:
             problems.append(f"validate-only element_id {eid!r} not found in the design")
@@ -352,113 +318,40 @@ Assertions use the real measured geometry - three blocks have under 10px slack."
 **Interfaces:**
 - Consumes: `canva.parse_elements`, `canva.compute_capacity` (Task 1).
 - Produces:
-  - `canva.split_emphasis(paragraph) -> list[str]` — one `**`-marked paragraph → 5 regions; raises `ValueError` when the shape is wrong
-  - `canva.build_operations(edits, element_map, elements) -> list[dict]` — Canva `perform-editing-operations` operations
+  - `canva.build_operations(edits, element_map) -> list[dict]` — Canva `perform-editing-operations` operations
   - `canva.find_overflows(elements_after, capacity) -> dict[str, dict]` — `{element_id: {"height", "capacity", "overflow_px"}}`
 
-`edits` maps a slot name to its new content: a **list of 5 strings** for `regions` mode (produced by `split_emphasis`, never authored by the agent), a **single string** for `replace` mode.
+`edits` maps a slot name to a **single string** of new text. Every slot is written with `replace_text`.
 
 - [ ] **Step 1: Write the failing tests**
 
 Append to `tests/test_canva.py`:
 
 ```python
-from canva import build_operations, find_overflows, split_emphasis
-
-
-def test_split_emphasis_turns_one_paragraph_into_five_regions():
-    para = ("Final-semester CS student at Ben-Gurion University with **backend Python** "
-            "experience from an IBM Research internship. Seeking a "
-            "**junior backend engineering** role.")
-    regions = split_emphasis(para)
-    assert len(regions) == 5
-    assert regions[1] == "backend Python"
-    assert regions[3] == "junior backend engineering"
-    assert regions[0].endswith("with ")
-    assert regions[4] == " role."
-    # the plain text must survive verbatim, markers stripped
-    assert "".join(regions) == para.replace("**", "")
-
-
-def test_split_emphasis_rejects_too_few_emphasis_spans():
-    with pytest.raises(ValueError, match="exactly two"):
-        split_emphasis("A summary with only **one** emphasised phrase.")
-
-
-def test_split_emphasis_rejects_too_many_emphasis_spans():
-    with pytest.raises(ValueError, match="exactly two"):
-        split_emphasis("**a** then **b** then **c** here.")
-
-
-def test_split_emphasis_rejects_emphasis_at_the_very_start():
-    with pytest.raises(ValueError, match="start"):
-        split_emphasis("**Leading** text then **second** trailing.")
-
-
-def test_split_emphasis_rejects_emphasis_at_the_very_end():
-    with pytest.raises(ValueError, match="end"):
-        split_emphasis("Text **first** then more then **trailing**")
-
-
-def test_split_emphasis_rejects_an_empty_middle_region():
-    # "**a****b**" would leave region[2] empty, and an empty find_text is unusable.
-    with pytest.raises(ValueError, match="empty"):
-        split_emphasis("lead **a****b** tail.")
-
+from canva import build_operations, find_overflows
 
 SUMMARY = f"{PAGE}-LBrJ8LlFHVgPZm7d"
 SKILLS = f"{PAGE}-LBkVtV7y5fKZMm0H"
 
-MAP = {
-    "summary": {"mode": "regions", "element_id": SUMMARY, "regions": 5},
-    "skills": {"mode": "replace", "element_id": SKILLS},
-}
+MAP = {"summary": SUMMARY, "skills": SKILLS}
 
 
-def test_replace_mode_builds_one_replace_text_operation():
-    els = parse_elements(sample_richtexts())
-    ops = build_operations({"skills": "Python\nJava\nSQL"}, MAP, els)
+def test_build_operations_emits_one_replace_text_per_slot():
+    ops = build_operations({"skills": "Python\nJava\nSQL"}, MAP)
     assert ops == [{"type": "replace_text", "element_id": SKILLS, "text": "Python\nJava\nSQL"}]
 
 
-def test_regions_mode_builds_one_find_and_replace_per_changed_region():
-    els = parse_elements(sample_richtexts())
-    original = els[SUMMARY]["regions"]
-    new = list(original)
-    new[1] = "IBM Research security-LLM pipeline"
-    new[3] = "junior backend engineering"
-    ops = build_operations({"summary": new}, MAP, els)
-
-    assert len(ops) == 2                      # unchanged regions produce no operation
-    assert all(o["type"] == "find_and_replace_text" for o in ops)
-    assert all(o["element_id"] == SUMMARY for o in ops)
-    assert {o["find_text"] for o in ops} == {original[1], original[3]}
-    assert {o["replace_text"] for o in ops} == {
-        "IBM Research security-LLM pipeline", "junior backend engineering"}
-
-
-def test_regions_mode_rejects_wrong_region_count():
-    els = parse_elements(sample_richtexts())
-    with pytest.raises(ValueError, match="5 regions"):
-        build_operations({"summary": ["only", "three", "regions"]}, MAP, els)
-
-
-def test_regions_mode_rejects_a_replacement_containing_another_find_text():
-    # find_and_replace_text matches on current text; one replacement swallowing
-    # another's find_text would silently corrupt the element.
-    els = parse_elements(sample_richtexts())
-    original = els[SUMMARY]["regions"]
-    new = list(original)
-    new[0] = "prefix " + original[1] + " suffix"     # contains region[1] verbatim
-    new[1] = "something else"
-    with pytest.raises(ValueError, match="find_text"):
-        build_operations({"summary": new}, MAP, els)
+def test_build_operations_handles_several_slots():
+    ops = build_operations({"summary": "A tailored paragraph.", "skills": "Python"}, MAP)
+    assert len(ops) == 2
+    assert all(o["type"] == "replace_text" for o in ops)
+    assert {o["element_id"] for o in ops} == {SUMMARY, SKILLS}
+    assert next(o["text"] for o in ops if o["element_id"] == SUMMARY) == "A tailored paragraph."
 
 
 def test_unknown_slot_is_rejected():
-    els = parse_elements(sample_richtexts())
     with pytest.raises(KeyError):
-        build_operations({"nonexistent": "x"}, MAP, els)
+        build_operations({"nonexistent": "x"}, MAP)
 
 
 def test_find_overflows_flags_only_elements_past_capacity():
@@ -496,81 +389,17 @@ Expected: FAIL — `ImportError: cannot import name 'build_operations' from 'can
 Append to `src/canva.py`:
 
 ```python
-import re
+def build_operations(edits, element_map):
+    """Turn a slot→text edit plan into Canva editing operations.
 
-_EMPHASIS = re.compile(r"\*\*(.+?)\*\*", re.DOTALL)
-
-
-def split_emphasis(paragraph):
-    """Turn ONE `**`-marked paragraph into the design's five text regions.
-
-    The agent writes the summary as a single paragraph — the five-region structure
-    is a Canva implementation detail and must not leak into the CV-editor rules.
-    Emphasis is attached to the region, so regions [1] and [3] render bold.
-    """
-    spans = list(_EMPHASIS.finditer(paragraph))
-    if len(spans) != 2:
-        raise ValueError(
-            f"summary must contain exactly two **emphasised** phrases, found "
-            f"{len(spans)}")
-    if spans[0].start() == 0:
-        raise ValueError("summary must not start with an emphasised phrase")
-    if spans[1].end() == len(paragraph):
-        raise ValueError("summary must not end with an emphasised phrase")
-
-    regions = [
-        paragraph[:spans[0].start()],
-        spans[0].group(1),
-        paragraph[spans[0].end():spans[1].start()],
-        spans[1].group(1),
-        paragraph[spans[1].end():],
-    ]
-    if any(not region for region in regions):
-        raise ValueError("summary produced an empty region — separate the two "
-                         "emphasised phrases with plain text")
-    return regions
-
-
-def build_operations(edits, element_map, elements):
-    """Turn a slot→content edit plan into Canva editing operations.
-
-    `regions` slots use find_and_replace_text so inline formatting survives —
-    formatting is attached to the region, so rewriting a bold region keeps it bold.
-    `replace` slots overwrite the element wholesale, which is safe only where there
-    is no inline formatting to lose.
+    Every slot is overwritten wholesale with replace_text. That flattens inline
+    formatting inside the element — accepted, because only the About Me paragraph
+    has any, and block-level formatting (bullets, font, colour) is preserved.
     """
     operations = []
-    for slot, content in edits.items():
-        spec = element_map[slot]            # KeyError on an unknown slot is correct
-        eid = spec["element_id"]
-
-        if spec["mode"] == "replace":
-            operations.append({"type": "replace_text", "element_id": eid, "text": content})
-            continue
-
-        expected = spec["regions"]
-        if not isinstance(content, (list, tuple)) or len(content) != expected:
-            raise ValueError(
-                f"slot {slot!r} is a regions slot and needs exactly {expected} regions, "
-                f"got {len(content) if isinstance(content, (list, tuple)) else type(content).__name__}")
-
-        current = elements[eid]["regions"]
-        changed = [(i, new) for i, new in enumerate(content) if new != current[i]]
-
-        # find_and_replace_text matches on the element's CURRENT text, so a
-        # replacement that contains another region's find_text would let one
-        # operation consume another's match.
-        find_texts = [current[i] for i, _ in changed]
-        for _, new in changed:
-            for find_text in find_texts:
-                if find_text in new:
-                    raise ValueError(
-                        f"slot {slot!r}: a replacement contains another region's "
-                        f"find_text ({find_text!r}) — operations would collide")
-
-        for i, new in changed:
-            operations.append({"type": "find_and_replace_text", "element_id": eid,
-                               "find_text": current[i], "replace_text": new})
+    for slot, text in edits.items():
+        eid = element_map[slot]             # KeyError on an unknown slot is correct
+        operations.append({"type": "replace_text", "element_id": eid, "text": text})
     return operations
 
 
@@ -600,9 +429,9 @@ Expected: PASS, 18 tests.
 git add src/canva.py tests/test_canva.py
 git commit -m "feat: build Canva edit operations and detect overflow
 
-regions slots use find_and_replace_text so inline bold survives; replacements
-are rejected when one would swallow another's find_text. Overflow is measured
-against recomputed heights returned before commit."
+Every slot is overwritten wholesale with replace_text. Overflow is measured
+against the recomputed heights the API returns before commit, so the transaction
+can still be cancelled."
 ```
 
 ---
@@ -628,8 +457,8 @@ from tooling import prepare_resume
 
 
 def _tailored_ok():
-    return {"summary": ("Final-semester CS student with **backend Python** experience. "
-                        "Seeking a **junior backend** role."),
+    return {"summary": "Final-semester CS student with backend Python experience. "
+                       "Seeking a junior backend role.",
             "skills": ["Python", "SQL"],
             "experience": [{"entry_index": 0, "bullets": ["Reworded."]}],
             "projects": [{"entry_index": 0, "bullets": []}]}
@@ -644,24 +473,14 @@ def test_prepare_rejects_below_threshold():
 def test_prepare_returns_slot_keyed_edits():
     out = prepare_resume(_job(), _score(), _tailored_ok())
     assert out["rejected"] is False
-    # the agent supplied ONE paragraph; prepare_resume split it into regions
-    assert isinstance(out["edits"]["summary"], list) and len(out["edits"]["summary"]) == 5
-    assert out["edits"]["summary"][1] == "backend Python"
+    assert out["edits"]["summary"] == _tailored_ok()["summary"]
     assert "\n" in out["edits"]["skills"]
     assert "experience.0.bullets" in out["edits"]
 
 
-def test_prepare_rejects_a_summary_without_two_emphasised_phrases():
-    tailored = _tailored_ok()
-    tailored["summary"] = "one flat paragraph with no emphasis at all"
-    out = prepare_resume(_job(), _score(), tailored)
-    assert out["rejected"] is True
-    assert "emphasi" in out["reason"].lower()
-
-
 def test_prepare_rejects_a_summary_that_is_not_a_string():
     tailored = _tailored_ok()
-    tailored["summary"] = ["five", "separate", "strings", "not", "wanted"]
+    tailored["summary"] = ["not", "a", "paragraph"]
     out = prepare_resume(_job(), _score(), tailored)
     assert out["rejected"] is True
     assert "string" in out["reason"].lower()
@@ -725,10 +544,6 @@ def prepare_resume(job, score, tailored):
     if not isinstance(summary, str):
         return _reject(f"summary must be a single paragraph string, got "
                        f"{type(summary).__name__}")
-    try:
-        summary_regions = canva.split_emphasis(summary)
-    except ValueError as exc:
-        return _reject(str(exc))
 
     skills = tailored.get("skills")
     if isinstance(skills, (list, tuple)):
@@ -743,7 +558,7 @@ def prepare_resume(job, score, tailored):
     parsed = parse_resume(base_cv)
     try:
         tcv = TailoredCV(
-            summary="".join(summary_regions),
+            summary=summary,
             skills=skills,
             experience=[TailoredEntry(entry_index=e["entry_index"], bullets=list(e["bullets"]))
                         for e in tailored["experience"]],
@@ -760,7 +575,7 @@ def prepare_resume(job, score, tailored):
 
     # Skills may have been stripped; rebuild the summary regions only if a skill
     # name was removed from them is NOT attempted — the guards own skills, not prose.
-    edits = {"summary": summary_regions, "skills": "\n".join(tcv.skills)}
+    edits = {"summary": summary, "skills": "\n".join(tcv.skills)}
 
     experience_section = parsed.get(EXPERIENCE_SECTION)
     base_entries = experience_section.entries if experience_section else []
@@ -776,8 +591,7 @@ def prepare_resume(job, score, tailored):
                 f"({len(edits[slot])} chars vs {len(original)} original)")
 
     summary_section = parsed.get(SUMMARY_SECTION)
-    if summary_section and _budget_exceeded("".join(summary_regions),
-                                            summary_section.body.strip()):
+    if summary_section and _budget_exceeded(summary, summary_section.body.strip()):
         return _reject("slot 'summary' exceeds the length budget")
 
     return {"rejected": False, "reason": "", "corrections": notes, "edits": edits}
@@ -787,7 +601,6 @@ def prepare_resume(job, score, tailored):
 
 In `src/tooling.py`:
 
-- **add** `import canva` (for `split_emphasis`). `canva.py` imports nothing from `tooling`, so this is safe.
 - **delete** `from render import render_output`. Nothing in `tooling.py` renders markdown any more, and leaving it would create an import cycle once Task 5 makes `render.py` import `safe_filename` **from** `tooling`.
 
 Then run `git grep -n "write_tailored_resume\|render_output" -- src/ tests/` and delete every remaining reference. Keep `safe_filename` — Task 5 reuses it for PDF filenames. Leave `render.py` itself untouched here.
@@ -1230,18 +1043,9 @@ Canva OAuth is handled by the CLI's stored credential — verified working headl
 
 - [ ] **Step 5: Update `CV_EDITOR_RULES`**
 
-In `src/agent.py`, change the `summary` bullet inside `CV_EDITOR_RULES` from its current single-paragraph instruction to:
+In `src/agent.py`, leave the `summary` bullet inside `CV_EDITOR_RULES` **exactly as it is** — the agent keeps writing one plain tailored paragraph, built only from evidence in the CV and positioned for the specific role. No Canva-specific instruction is added.
 
-```
-- summary: 2-3 sentences positioning the candidate for this specific role, built
-  only from evidence in the CV. Write it as ONE paragraph, and wrap the two phrases
-  most worth emphasising for THIS job in double asterisks, like **backend Python**.
-  Exactly two such phrases, and neither may be the very first or very last thing in
-  the paragraph — they are rendered bold in the résumé and need plain text around
-  them.
-```
-
-Also delete the "reordered so the most relevant entry comes first" clause from both
+Delete only the "reordered so the most relevant entry comes first" clause from both
 the `experience` and `projects` bullets — R2 keeps entries in their original order,
 because the design's slots are fixed positions with fixed heights.
 
@@ -1262,9 +1066,7 @@ Replace step 4 of `WORKFLOW` in `src/agent.py` with:
       new design's id and its edit URL.
    e. Call `start-editing-transaction` on that new design. Keep the transaction id.
    f. Call `perform-editing-operations` with the operations for the `edits` returned
-      by `prepare_resume`. Use `find_and_replace_text` for the summary (one operation
-      per region whose text changed, with the region's CURRENT text as `find_text`)
-      and `replace_text` for every other slot.
+      by `prepare_resume` - one `replace_text` per slot, carrying the full new text.
    g. Check the element dimensions in the response. If any edited element is now
       taller than the space above the next element below it, the text overflows:
       call `cancel-editing-transaction`, shorten the offending text, and retry from
@@ -1307,7 +1109,7 @@ git commit -m "feat: wire the agent to Canva; prepare_resume replaces write_resu
 
 Adds the Canva MCP, the per-job copy/edit/export sequence with a bounded
 overflow-redraft loop, and the PreToolUse write guard. CV_EDITOR_RULES now
-specifies the five-region summary shape and drops entry reordering, which
+leaves the summary rules untouched and drops entry reordering, which
 fixed-position slots cannot support."
 ```
 
@@ -1358,10 +1160,10 @@ git commit --allow-empty -m "chore: first live Canva run - <N> PDFs; <overflow/r
 
 ## Self-Review
 
-- **Spec coverage:** threshold gate (Task 3, Task 6 step 6b) ✓; per-job copy (Task 6 step 6d) ✓; dated Canva folder (Task 6 steps 3b, 6j) ✓; per-run index with apply URL and Canva link (Task 5) ✓; `base_cv.md` as source of truth with unchanged guards (Task 3) ✓; two write modes with `find_and_replace_text` for the summary (Task 2, Task 6 step 6f) ✓; five-region summary shape enforced in code (Task 3) and in the prompt (Task 6 step 5) ✓; element map + validation (Task 1) ✓; capacity/overflow detection (Tasks 1-2) and the bounded redraft loop (Task 6 step 6g) ✓; `prepare_resume` + `PreToolUse` guard as the two-part boundary (Tasks 3-4) ✓; Monid hook, buffer, env and `disallowed_tools` preserved (Task 6 test assertions) ✓; reordering dropped (Task 6 step 5) ✓; live verification (Task 7) ✓.
-- **Deviation from the spec, deliberate:** the spec set `LENGTH_BUDGET_RATIO ≈ 0.95`. That would reject **every** run, because reordering skills is length-preserving and the reordered string is the same length as the original. The plan uses **1.05** and states explicitly that the budget is cheap prevention while `canva.find_overflows` is the authoritative check. Flagged for review rather than silently applied.
+- **Spec coverage:** threshold gate (Task 3, Task 6 step 6b) ✓; per-job copy (Task 6 step 6d) ✓; dated Canva folder (Task 6 steps 3b, 6j) ✓; per-run index with apply URL and Canva link (Task 5) ✓; `base_cv.md` as source of truth with unchanged guards (Task 3) ✓; single `replace_text` write mode (Task 2, Task 6 step 6f) ✓; summary accepted as a plain paragraph, unchanged from today (Task 3, Task 6 step 5) ✓; element map + validation (Task 1) ✓; capacity/overflow detection (Tasks 1-2) and the bounded redraft loop (Task 6 step 6g) ✓; `prepare_resume` + `PreToolUse` guard as the two-part boundary (Tasks 3-4) ✓; Monid hook, buffer, env and `disallowed_tools` preserved (Task 6 test assertions) ✓; reordering dropped (Task 6 step 5) ✓; live verification (Task 7) ✓.
+- **`LENGTH_BUDGET_RATIO` is 1.05, and the spec was corrected to match.** The spec originally said ~0.95, which would reject **every** run: reordering skills is length-preserving, so the new string is exactly as long as the original. The ratio must stay above 1.0; the budget is cheap prevention and `canva.find_overflows` is the authoritative check.
 - **Not covered, and deliberately so:** run-start map validation is implemented (`canva.validate_map`) but is not wired into `agent.py` as a pre-flight abort, because the agent — not Python — drives the Canva calls. It is exercised by tests and available; wiring it into a startup check is a follow-up once the live run shows how drift actually manifests.
 - **Placeholder scan:** every code step carries complete, runnable content; no "add error handling", no "similar to Task N". Task 7's steps 4-5 are visual-inspection checklists, which is the honest form for a rendering result that cannot be asserted programmatically.
-- **Summary shape:** the agent supplies **one `**`-marked paragraph** (Task 6's `CV_EDITOR_RULES`); `prepare_resume` calls `canva.split_emphasis` to produce the five regions (Task 3); `build_operations` consumes those five regions (Task 2). The five-region structure appears nowhere in the prompt. Validated before writing: the happy path round-trips verbatim with markers stripped, and all five rejection cases raise with the expected messages.
-- **Import direction:** `canva` ← `tooling` ← `render`. Task 3 drops `tooling`'s `render_output` import specifically so Task 5 can have `render.py` import `safe_filename` from `tooling` without a cycle.
-- **Type consistency:** `edits` is slot-keyed with a list-of-5 for `summary` and a string elsewhere, identically in Task 2's `build_operations`, Task 3's `prepare_resume`, and Task 6's workflow text. `parse_elements` returns `{"top","left","width","height","regions"}` and `compute_capacity`/`find_overflows` consume exactly those keys. `config.CANVA_ELEMENT_MAP` slot names (`summary`, `skills`, `experience.N.bullets`) are identical in Tasks 1, 2, 3, 4 and 6.
+- **Summary:** the agent writes a plain tailored paragraph, exactly as it does today. `CV_EDITOR_RULES` gains no Canva-specific instruction. The accepted cost is that the two phrases currently bolded inside that paragraph render at normal weight; block-level formatting everywhere else is preserved.
+- **Import direction:** `render` imports from `tooling`. Task 3 drops `tooling`'s `render_output` import specifically so Task 5 can add that without a cycle. `tooling` does not import `canva`.
+- **Type consistency:** `edits` is slot-keyed with a plain string for every slot, identically in Task 2's `build_operations`, Task 3's `prepare_resume`, and Task 6's workflow text. `config.CANVA_ELEMENT_MAP` maps a slot name directly to an `element_id` (no nested spec dict), consistently in Tasks 1, 2, 4 and 6. `parse_elements` returns `{"top","left","width","height","regions"}` and `compute_capacity`/`find_overflows` consume exactly those keys. `config.CANVA_ELEMENT_MAP` slot names (`summary`, `skills`, `experience.N.bullets`) are identical in Tasks 1, 2, 3, 4 and 6.
