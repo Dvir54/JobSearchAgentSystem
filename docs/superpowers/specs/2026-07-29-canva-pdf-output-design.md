@@ -45,6 +45,8 @@ Against the real account, design `DAHQxzJVWM4` (a duplicate of the master résum
 | Block formatting (bullets, font, colour, size) | ✅ preserved by `replace_text` |
 | Inline formatting (bold spans inside a paragraph) | ❌ **flattened** by `replace_text` |
 | Inline formatting via `find_and_replace_text` | ✅ **preserved** — bold survived |
+| Rewriting a **bold** region keeps it bold | ✅ verified — new phrases rendered bold |
+| Multiple `find_and_replace_text` ops on one element, batched | ✅ all three returned `success` |
 | `copy-design` on Free | ✅ works |
 | **Element IDs across a copy** | ✅ **identical** — same `page_id`, same element ids |
 | Agent SDK → Canva MCP headlessly | ✅ works both inherited from CLI config and declared explicitly |
@@ -153,6 +155,12 @@ surfaced; bold was not). So the code cannot detect which regions are bold. It mu
   `find_and_replace_text`. Formatting is attached to the **region**, not to the words, so
   rewriting a bold region yields new text that is still bold. Applies to the About Me
   summary.
+
+  **Verified live**, not inferred: replacing the bold regions
+  `"IBM Research internship" → "IBM Research security-LLM pipeline"` and
+  `"junior software engineering" → "junior backend engineering"`, together with a plain
+  region, in one batched call — all three succeeded, both new phrases rendered **bold**, the
+  element kept its 5-region structure, and its height was unchanged.
 
 **The summary is freely tailored — every region is editable**, matching today's markdown
 behaviour where the summary is rewritten per job. The agent chooses what goes in the bold
