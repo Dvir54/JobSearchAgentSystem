@@ -167,11 +167,26 @@ behaviour where the summary is rewritten per job. The agent chooses what goes in
 slots, so emphasis is tailored too. (Today's `.md` renders the summary entirely plain, so
 this is a small improvement on current output, not a regression.)
 
-**The one constraint:** the summary must keep its **five-region shape** —
-`plain, EMPHASIS, plain, EMPHASIS, plain`. The agent writes new content for each region but
-cannot collapse the summary into a single blob, or the bold has nothing to attach to. The
-CV-editor rules must state this shape explicitly, with the region roles described, or the
-agent will draft summaries that cannot be applied.
+**The agent writes the summary as ONE paragraph, not as five strings.** Requiring five
+separate strings would leak a Canva implementation detail into the CV-editor rules and make
+the prose harder to write well. Instead the agent marks the two phrases worth emphasising
+with `**…**` — the notation it already uses — and `canva.split_emphasis()` turns that single
+string into the five regions deterministically:
+
+```
+"Final-semester CS student at Ben-Gurion University with **backend Python**
+ experience from an IBM Research internship. Seeking a **junior backend
+ engineering** role."
+   → ["Final-semester CS student … with ", "backend Python",
+      " experience from an IBM Research internship. Seeking a ",
+      "junior backend engineering", " role."]
+```
+
+**The one content rule:** exactly two `**…**` spans, neither at the very start nor the very
+end, so the `plain / BOLD / plain / BOLD / plain` shape holds and no region comes out empty.
+A summary that does not satisfy this is rejected by `prepare_resume` with an actionable
+message; the shape itself never appears in the CV-editor rules as a "five strings"
+instruction.
 
 Two implementation details this forces:
 
