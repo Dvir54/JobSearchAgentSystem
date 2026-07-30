@@ -43,3 +43,39 @@ LOCATION_KEYWORD = "israel"
 # reaches the hook, which then shrinks it before the model sees it. A real 24h run
 # was 774,006 chars (~193K tokens); a week window is larger.
 MAX_MCP_OUTPUT_TOKENS = "500000"
+
+# --- Canva (Phase R2) ---
+# Copies are made from a pinned TEMPLATE, not the live master résumé, so edits to
+# the master cannot break a run mid-flight. Re-duplicate the master and re-validate
+# the map when the résumé changes; run-start validation surfaces the drift.
+CANVA_TEMPLATE_DESIGN_ID = "DAHQxzJVWM4"
+CANVA_PAGE_ID = "PB5prZGGYdD17M0v"
+CANVA_FOLDER_PREFIX = "Job CVs"          # folder per run: "Job CVs — 2026-07-29"
+
+
+def _el(suffix):
+    return f"{CANVA_PAGE_ID}-{suffix}"
+
+
+# Slots the pipeline writes, each overwritten wholesale with replace_text.
+CANVA_ELEMENT_MAP = {
+    "summary": _el("LBrJ8LlFHVgPZm7d"),
+    "skills": _el("LBkVtV7y5fKZMm0H"),
+    "experience.0.bullets": _el("LBk2rXZgbWWq75bp"),
+    "experience.1.bullets": _el("LBzpBGcBgpx9yCWC"),
+}
+
+# Never written — mapped only so run-start validation detects layout drift.
+CANVA_VALIDATE_ONLY_IDS = [
+    _el("LB6dWjhqhy865bfK"), _el("LBm83fB0jYRwNXp0"),   # experience[0] title, date
+    _el("LBy14hl84Yxspf65"), _el("LBDfDPSFmCscLJyk"),   # experience[1] title, date
+    _el("LBSw3MPln78BRrNQ"), _el("LBBn7RTVpPvK72YS"),   # project[0] title, tech
+    _el("LBQSRXttJ86dgQdP"), _el("LBWRLc5NXj6GqzXz"),   # project[1] title, tech
+    _el("LBCWJ2xXXDKgHbZT"), _el("LBY9Fc1br0rnxvPL"),   # project[2] title, tech
+]
+
+MAX_REDRAFT_ATTEMPTS = 2       # overflow redrafts per job before skipping it
+# Cheap prevention only. The authoritative overflow check is the post-edit height
+# comparison — skills reordering is length-preserving, so a sub-1.0 ratio would
+# reject every run.
+LENGTH_BUDGET_RATIO = 1.05
