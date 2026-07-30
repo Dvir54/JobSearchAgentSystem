@@ -182,8 +182,10 @@ Follow this workflow exactly:
       element heights yourself. If `ok` is true, continue to (h). If `ok` is false there
       are two distinct cases, and they call for different responses:
       - `overflow` is non-empty: call `cancel-editing-transaction`, shorten the named
-        blocks by roughly the reported pixel overrun, and retry from step (d) — at most
-        {config.MAX_REDRAFT_ATTEMPTS} times. After that, skip the job and record it.
+        blocks by roughly the reported pixel overrun, and retry from step (e) —
+        cancelling leaves the copied design itself pristine, so there is no need to
+        copy it again. Retry at most {config.MAX_REDRAFT_ATTEMPTS} times. After that,
+        skip the job and record it.
       - `failed_operations` is non-empty: the edit itself was rejected for a reason
         unrelated to overflow. There is no block to shorten and no point retrying the
         same operations — call `cancel-editing-transaction`, record the failure, and
