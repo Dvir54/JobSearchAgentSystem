@@ -173,8 +173,19 @@ def test_find_overflows_ignores_elements_we_did_not_edit():
     els = parse_elements(sample_richtexts())
     caps = compute_capacity(els)
     title = f"{PAGE}-LB6dWjhqhy865bfK"
+
     assert els[title]["height"] > caps[title]            # genuinely over, by design
+    # ...and it WOULD be reported if we claimed to have edited it - this is the
+    # false positive that scoping exists to suppress
+    assert title in find_overflows(els, caps, EDITED + [title])
+    # ...but we did not edit it, so it is not our problem
     assert title not in find_overflows(els, caps, EDITED)
+
+
+def test_find_overflows_handles_ids_missing_from_elements_after():
+    els = parse_elements(sample_richtexts())
+    caps = compute_capacity(els)
+    assert find_overflows({}, caps, [SKILLS]) == {}
 
 
 def test_find_overflows_tolerates_infinite_capacity():
