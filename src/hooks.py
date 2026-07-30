@@ -8,7 +8,10 @@ No claude_agent_sdk import: the callback is a plain async function returning a
 dict, so it stays unit-testable without the SDK. agent.py does the registering.
 """
 import asyncio
+import json
+import sys
 
+import canva
 import config
 import tooling
 from tailoring import TailoredCV, strip_invented_skills
@@ -100,4 +103,98 @@ async def guard_canva_write(input, tool_use_id, context):
                         f"them, and try again."),
                 }
             }
+    return {}
+
+
+_CANVA_START = "mcp__canva__start-editing-transaction"
+_CANVA_PERFORM = "mcp__canva__perform-editing-operations"
+_CANVA_END = ("mcp__canva__commit-editing-transaction",
+              "mcp__canva__cancel-editing-transaction")
+
+# transaction_id -> {element_id: capacity_px}, held here so the geometry never
+# reaches the model. Released when the transaction commits or cancels.
+_CAPACITY_BY_TRANSACTION = {}
+
+
+def _slim(payload):
+    return {"hookSpecificOutput": {
+        "hookEventName": "PostToolUse",
+        "updatedToolOutput": [{"type": "text",
+                               "text": json.dumps(payload, ensure_ascii=False)}],
+    }}
+
+
+def _parse_payload(tool_response):
+    if isinstance(tool_response, dict):
+        return tool_response
+    try:
+        return json.loads(tool_response)
+    except (TypeError, ValueError):
+        return None
+
+
+async def reduce_canva_output(input, tool_use_id, context):
+    """Replace the Canva element dumps with the few facts the agent needs.
+
+    start-editing-transaction and perform-editing-operations each return the whole
+    design (~13-16KB, twice per job). The agent needs a transaction id and an
+    overflow verdict; the element map is already pinned in config. Holding the
+    geometry here also lets `canva.find_overflows` make the overflow call in code,
+    rather than the model comparing floats.
+
+    Anything it cannot fully vouch for passes through untouched.
+    """
+    name = input.get("tool_name")
+
+    if name in _CANVA_END:
+        transaction_id = (input.get("tool_input") or {}).get("transaction_id")
+        _CAPACITY_BY_TRANSACTION.pop(transaction_id, None)
+        return {}
+
+    if name == _CANVA_START:
+        run = _parse_payload(input.get("tool_response"))
+        if not isinstance(run, dict) or "richtexts" not in run:
+            print("[canva] DECLINED: start-editing-transaction payload not understood; "
+                  "passing through unreduced", file=sys.stderr)
+            return {}
+        transaction_id = (run.get("transaction") or {}).get("transaction_id")
+        elements = canva.parse_elements(run["richtexts"])
+        _CAPACITY_BY_TRANSACTION[transaction_id] = canva.compute_capacity(elements)
+        pages = run.get("pages") or [{}]
+        print(f"[canva] transaction {transaction_id}: {len(elements)} elements, "
+              f"geometry retained in-process", file=sys.stderr)
+        return _slim({"transaction_id": transaction_id,
+                      "page_id": pages[0].get("page_id"),
+                      "element_count": len(elements)})
+
+    if name == _CANVA_PERFORM:
+        tool_input = input.get("tool_input") or {}
+        transaction_id = tool_input.get("transaction_id")
+        capacity = _CAPACITY_BY_TRANSACTION.get(transaction_id)
+        run = _parse_payload(input.get("tool_response"))
+        if capacity is None or not isinstance(run, dict) or "richtexts" not in run:
+            print(f"[canva] DECLINED: no retained geometry for transaction "
+                  f"{transaction_id!r}, or unreadable payload; passing through",
+                  file=sys.stderr)
+            return {}
+
+        edited = [op.get("element_id") for op in (tool_input.get("operations") or [])
+                  if isinstance(op, dict) and op.get("element_id")]
+        after = canva.parse_elements(run["richtexts"])
+        overflows = canva.find_overflows(after, capacity, edited)
+
+        results = run.get("edit_operation_results") or []
+        failed = [r for r in results if r.get("status") != "success"]
+        if overflows:
+            summary = {eid: round(info["overflow_px"], 1)
+                       for eid, info in overflows.items()}
+            print(f"[canva] OVERFLOW in transaction {transaction_id}: {summary}",
+                  file=sys.stderr)
+        return _slim({
+            "ok": not overflows and not failed,
+            "overflow": {eid: round(info["overflow_px"], 1)
+                         for eid, info in overflows.items()},
+            "failed_operations": failed,
+        })
+
     return {}

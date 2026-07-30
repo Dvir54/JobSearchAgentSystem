@@ -1,6 +1,8 @@
 import asyncio
 import json
 
+import pytest
+
 import config
 import hooks
 from tooling import strip_invented_skills  # noqa: F401  (proves the guard path is shared)
@@ -166,3 +168,115 @@ def test_guard_denies_invented_skills_via_find_and_replace_text():
     decision = out["hookSpecificOutput"]
     assert decision["permissionDecision"] == "deny"
     assert "Kubernetes" in decision["permissionDecisionReason"]
+
+
+PAGE = "PB5prZGGYdD17M0v"
+SUMMARY_EL = f"{PAGE}-LBrJ8LlFHVgPZm7d"
+SKILLS_EL = f"{PAGE}-LBkVtV7y5fKZMm0H"
+
+
+def _post(tool_name, tool_response, tool_input=None):
+    return {"hook_event_name": "PostToolUse", "tool_name": tool_name,
+            "tool_input": tool_input or {}, "tool_response": tool_response,
+            "tool_use_id": "toolu_test"}
+
+
+def _reduce(tool_name, tool_response, tool_input=None):
+    return asyncio.run(hooks.reduce_canva_output(
+        _post(tool_name, tool_response, tool_input), "toolu_test", {}))
+
+
+def _rt_el(eid, top, left, width, height, texts):
+    return {"regions": [{"type": "character", "text": t} for t in texts],
+            "containerElement": {"type": "TEXT",
+                                 "position": {"top": top, "left": left},
+                                 "dimension": {"width": width, "height": height}},
+            "element_id": eid}
+
+
+def _start_payload(summary_height=69.33332, skills_height=208.959984):
+    return json.dumps({
+        "transaction": {"status": "open", "transaction_id": "TX1"},
+        "richtexts": [
+            _rt_el(SUMMARY_EL, 119.31, 314.77, 470.38, summary_height, ["a"]),
+            _rt_el(f"{PAGE}-header", 229.64, 339.83, 205.81, 26.46, ["Work Experience"]),
+            _rt_el(SKILLS_EL, 403.86, 4.65, 178.20, skills_height, ["Java"]),
+            _rt_el(f"{PAGE}-vol", 621.98, 42.47, 178.98, 26.46, [" Volunteering"]),
+        ],
+        "pages": [{"page_id": PAGE, "page_number": 1, "is_responsive": False}],
+    })
+
+
+def test_start_transaction_is_reduced_to_ids_only():
+    out = _reduce("mcp__canva__start-editing-transaction", _start_payload())
+    text = out["hookSpecificOutput"]["updatedToolOutput"][0]["text"]
+    payload = json.loads(text)
+    assert payload["transaction_id"] == "TX1"
+    assert payload["page_id"] == PAGE
+    # the element dump must NOT reach the model
+    assert "richtexts" not in payload
+    assert "containerElement" not in text
+    assert len(text) < 400
+
+
+def test_perform_operations_reports_ok_when_everything_fits():
+    _reduce("mcp__canva__start-editing-transaction", _start_payload())
+    out = _reduce("mcp__canva__perform-editing-operations", _start_payload(),
+                  {"transaction_id": "TX1",
+                   "operations": [{"type": "replace_text", "element_id": SKILLS_EL,
+                                   "text": "Python"}]})
+    payload = json.loads(out["hookSpecificOutput"]["updatedToolOutput"][0]["text"])
+    assert payload["ok"] is True
+    assert payload["overflow"] == {}
+
+
+def test_perform_operations_reports_overflow_with_the_pixel_amount():
+    _reduce("mcp__canva__start-editing-transaction", _start_payload())
+    # skills capacity is 621.98 - 403.86 = 218.12; make it 20px taller than that
+    out = _reduce("mcp__canva__perform-editing-operations",
+                  _start_payload(skills_height=238.12),
+                  {"transaction_id": "TX1",
+                   "operations": [{"type": "replace_text", "element_id": SKILLS_EL,
+                                   "text": "far too many skills"}]})
+    payload = json.loads(out["hookSpecificOutput"]["updatedToolOutput"][0]["text"])
+    assert payload["ok"] is False
+    assert payload["overflow"][SKILLS_EL] == pytest.approx(20.0, abs=0.05)
+
+
+def test_perform_operations_only_judges_the_elements_it_edited():
+    _reduce("mcp__canva__start-editing-transaction", _start_payload())
+    # the summary is wildly over its capacity, but we only edited skills
+    out = _reduce("mcp__canva__perform-editing-operations",
+                  _start_payload(summary_height=9999),
+                  {"transaction_id": "TX1",
+                   "operations": [{"type": "replace_text", "element_id": SKILLS_EL,
+                                   "text": "Python"}]})
+    payload = json.loads(out["hookSpecificOutput"]["updatedToolOutput"][0]["text"])
+    assert payload["ok"] is True
+
+
+def test_commit_releases_the_stored_geometry():
+    _reduce("mcp__canva__start-editing-transaction", _start_payload())
+    assert "TX1" in hooks._CAPACITY_BY_TRANSACTION
+    _reduce("mcp__canva__commit-editing-transaction", "{}", {"transaction_id": "TX1"})
+    assert "TX1" not in hooks._CAPACITY_BY_TRANSACTION
+
+
+def test_cancel_releases_the_stored_geometry():
+    _reduce("mcp__canva__start-editing-transaction", _start_payload())
+    _reduce("mcp__canva__cancel-editing-transaction", "{}", {"transaction_id": "TX1"})
+    assert "TX1" not in hooks._CAPACITY_BY_TRANSACTION
+
+
+def test_perform_without_a_known_transaction_passes_through():
+    # No start seen for this id - do not invent an overflow verdict.
+    assert _reduce("mcp__canva__perform-editing-operations", _start_payload(),
+                   {"transaction_id": "UNKNOWN", "operations": []}) == {}
+
+
+def test_unparseable_canva_payload_passes_through():
+    assert _reduce("mcp__canva__start-editing-transaction", "not json") == {}
+
+
+def test_non_canva_tool_is_untouched():
+    assert _reduce("mcp__monid__monid_run", "{}") == {}
