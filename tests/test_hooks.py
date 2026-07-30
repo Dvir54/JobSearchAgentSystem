@@ -101,3 +101,54 @@ def test_does_not_pace_when_the_run_completed(monkeypatch):
     out = _call(_completed([_raw("1", "Tel Aviv, Israel")]))
     assert out["hookSpecificOutput"]["updatedToolOutput"]
     assert slept == []
+
+
+import config
+from tooling import strip_invented_skills  # noqa: F401  (proves the guard path is shared)
+
+
+def _canva_input(operations):
+    return {"hook_event_name": "PreToolUse",
+            "tool_name": "mcp__canva__perform-editing-operations",
+            "tool_input": {"transaction_id": "1", "page_index": 1, "operations": operations},
+            "tool_use_id": "toolu_test"}
+
+
+def _call_guard(operations):
+    return asyncio.run(hooks.guard_canva_write(_canva_input(operations), "toolu_test", {}))
+
+
+SKILLS_ID = config.CANVA_ELEMENT_MAP["skills"]
+
+
+def test_guard_allows_skills_present_in_the_base_cv():
+    out = _call_guard([{"type": "replace_text", "element_id": SKILLS_ID,
+                        "text": "Python\nJava\nSQL"}])
+    assert out == {}
+
+
+def test_guard_denies_a_skill_absent_from_the_base_cv():
+    out = _call_guard([{"type": "replace_text", "element_id": SKILLS_ID,
+                        "text": "Python\nKubernetes"}])
+    decision = out["hookSpecificOutput"]
+    assert decision["permissionDecision"] == "deny"
+    assert "Kubernetes" in decision["permissionDecisionReason"]
+
+
+def test_guard_ignores_operations_on_unmapped_elements():
+    out = _call_guard([{"type": "replace_text", "element_id": "PAGE-unmapped",
+                        "text": "anything at all"}])
+    assert out == {}
+
+
+def test_guard_allows_a_non_canva_tool_untouched():
+    other = {"hook_event_name": "PreToolUse", "tool_name": "mcp__monid__monid_run",
+             "tool_input": {}, "tool_use_id": "t"}
+    assert asyncio.run(hooks.guard_canva_write(other, "t", {})) == {}
+
+
+def test_guard_never_raises_on_a_malformed_payload():
+    bad = {"hook_event_name": "PreToolUse",
+           "tool_name": "mcp__canva__perform-editing-operations",
+           "tool_input": None, "tool_use_id": "t"}
+    assert asyncio.run(hooks.guard_canva_write(bad, "t", {})) == {}
