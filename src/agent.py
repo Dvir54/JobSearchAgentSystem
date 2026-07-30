@@ -1,13 +1,15 @@
 """Entry point: run one autonomous job-search + tailoring session.
 
 The agent owns judgment and orchestration (job search, fit scoring, CV
-tailoring). The deterministic core splits across two enforcement points: the
-Israel filter/dedup happens in the PostToolUse hook before the agent ever
-sees a job (see hooks.py / tooling.reduce_run_payload), and the truthfulness
-guards happen inside the `prepare_resume` tool (see tools.py / tooling.py),
-which returns a Canva edit plan that the agent then applies itself via the
-Canva MCP. The agent cannot produce an unchecked or untruthful résumé, nor
-see an unfiltered job list; it can only ask the gate to try.
+tailoring). The deterministic core splits across three enforcement points:
+the Israel filter/dedup happens in the PostToolUse hook before the agent
+ever sees a job (see hooks.py / tooling.reduce_run_payload); `prepare_resume`
+(tools.py / tooling.py) computes a guard-checked Canva edit plan but writes
+nothing itself; and because the agent makes the Canva calls itself, and
+could send something other than what `prepare_resume` returned, the
+PreToolUse hook on `perform-editing-operations` (hooks.guard_canva_write) is
+what actually inspects and denies an untruthful write. Both halves are
+required for the guarantee to hold.
 """
 import asyncio
 import os
@@ -175,14 +177,22 @@ Follow this workflow exactly:
    e. Call `start-editing-transaction` on that new design. Keep the transaction id.
    f. Call `perform-editing-operations` with the operations for the `edits` returned
       by `prepare_resume` - one `replace_text` per slot, carrying the full new text.
-   g. The response is `{{"ok": true}}` or `{{"ok": false, "overflow": {{element_id: px}}}}`.
-      The overflow check is done for you in code — do NOT try to compare element
-      heights yourself. If `ok` is false: call `cancel-editing-transaction`, shorten
-      the named block by roughly the reported pixel overrun, and retry from step (d)
-      — at most {config.MAX_REDRAFT_ATTEMPTS} times. After that, skip the job and
-      record it. NEVER commit a design whose response was not `ok`.
+   g. The response is `{{"ok": bool, "overflow": {{element_id: px}}, "failed_operations":
+      [...]}}`. The overflow check is done for you in code — do NOT try to compare
+      element heights yourself. If `ok` is true, continue to (h). If `ok` is false there
+      are two distinct cases, and they call for different responses:
+      - `overflow` is non-empty: call `cancel-editing-transaction`, shorten the named
+        blocks by roughly the reported pixel overrun, and retry from step (d) — at most
+        {config.MAX_REDRAFT_ATTEMPTS} times. After that, skip the job and record it.
+      - `failed_operations` is non-empty: the edit itself was rejected for a reason
+        unrelated to overflow. There is no block to shorten and no point retrying the
+        same operations — call `cancel-editing-transaction`, record the failure, and
+        move on to the next job.
+      NEVER commit a design whose response was not `ok`.
    h. Call `commit-editing-transaction`.
-   i. Call `export-design` for PDF and poll until it completes.
+   i. Call `get-export-formats` for this design first — `export-design` requires it and
+      will not accept a guessed format. Then call `export-design` for PDF and poll until
+      it completes.
    j. Call `save_pdf` with the export URL, the company, the title and the job id.
       You have no other way to write a file.
    k. Call `move-item-to-folder` to file the design in this run's folder.
