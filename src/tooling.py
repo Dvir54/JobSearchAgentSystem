@@ -279,3 +279,55 @@ def reduce_run_payload(tool_response):
           f"dropped_duplicate={dropped_duplicate} "
           f"dropped_non_israel={dropped_non_israel}", file=sys.stderr)
     return text
+
+
+def _fetch_bytes(url):
+    """Isolated so tests can substitute it without touching the network."""
+    import urllib.request
+    with urllib.request.urlopen(url, timeout=120) as response:
+        return response.read()
+
+
+def run_dir(today=None):
+    """output/<YYYY-MM-DD>/ for this run, created on demand."""
+    from datetime import date
+    stamp = today or date.today().isoformat()
+    path = config.OUTPUT_DIR / stamp
+    path.mkdir(parents=True, exist_ok=True)
+    return path
+
+
+def save_pdf(export_url, company, title, job_id, today=None):
+    """Download an exported Canva PDF into this run's output directory.
+
+    The agent has no Bash/Read/Write/WebFetch - those are denied so a failure
+    cannot degrade into hand-parsing - so downloading has to happen here.
+    Returns rather than raises: one job's failed download must not end the run.
+    """
+    from render import pdf_filename
+    filename = pdf_filename(company, title, job_id)
+    try:
+        payload = _fetch_bytes(export_url)
+    except Exception as exc:                     # noqa: BLE001 - report, never abort the run
+        print(f"[save_pdf] {filename}: download failed ({exc})", file=sys.stderr)
+        return {"saved": None, "error": str(exc), "filename": filename}
+
+    if not payload:
+        message = "download was empty; nothing written"
+        print(f"[save_pdf] {filename}: {message}", file=sys.stderr)
+        return {"saved": None, "error": message, "filename": filename}
+
+    path = run_dir(today) / filename
+    path.write_bytes(payload)
+    print(f"[save_pdf] wrote {path} ({len(payload):,} bytes)", file=sys.stderr)
+    return {"saved": str(path), "error": "", "filename": filename}
+
+
+def write_index(entries, window, skipped_count, today=None):
+    """Write this run's index.md - the operator view that cannot live inside a CV."""
+    from render import render_index
+    path = run_dir(today) / "index.md"
+    path.write_text(render_index(entries, window, skipped_count), encoding="utf-8")
+    print(f"[write_index] wrote {path} ({len(entries)} entries, "
+          f"{skipped_count} skipped)", file=sys.stderr)
+    return {"written": str(path)}

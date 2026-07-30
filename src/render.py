@@ -1,55 +1,40 @@
-"""Assemble the complete output file: a metadata block above a full,
-job-tailored resume. Static sections are copied verbatim; tailored sections
-are rendered from the model; entry anchors always come from the base CV.
+"""The per-run index. The résumé itself is now a Canva-rendered PDF; this file
+carries the operator information that cannot live inside a CV sent to an employer —
+fit score, reasoning, the apply URL, and any guard corrections.
 """
-from config import EXPERIENCE_SECTION, PROJECTS_SECTION, SKILLS_SECTION, SUMMARY_SECTION
-from resume import ParsedResume
-from tailoring import TailoredCV
-
-
-def _render_entries(tailored_entries, base_entries) -> str:
-    blocks: list[str] = []
-    for tailored in tailored_entries:
-        anchor = base_entries[tailored.entry_index].anchor
-        lines = [anchor]
-        if tailored.bullets:
-            lines.append("")
-            lines += [f"- {bullet}" for bullet in tailored.bullets]
-        blocks.append("\n".join(lines))
-    return "\n\n".join(blocks)
-
-
-def _render_resume(parsed: ParsedResume, tailored: TailoredCV) -> str:
-    experience = parsed.get(EXPERIENCE_SECTION)
-    projects = parsed.get(PROJECTS_SECTION)
-    exp_entries = experience.entries if experience else []
-    proj_entries = projects.entries if projects else []
-
-    parts = [parsed.preamble]
-    for section in parsed.sections:
-        if section.name == SUMMARY_SECTION:
-            parts.append(f"## {section.name}\n\n{tailored.summary}")
-        elif section.name == SKILLS_SECTION:
-            parts.append(f"## {section.name}\n\n{', '.join(tailored.skills)}")
-        elif section.name == EXPERIENCE_SECTION:
-            parts.append(f"## {section.name}\n\n{_render_entries(tailored.experience, exp_entries)}")
-        elif section.name == PROJECTS_SECTION:
-            parts.append(f"## {section.name}\n\n{_render_entries(tailored.projects, proj_entries)}")
-        else:
-            parts.append(f"## {section.name}\n\n{section.body}")
-    return "\n\n".join(parts)
-
+from tooling import safe_filename
 
 _MATCH_LABEL = {"direct": "Direct fit", "stretch": "Learnable stretch"}
 
 
-def render_output(posting, score, parsed: ParsedResume, tailored: TailoredCV, notes=None) -> str:
-    lines = [
-        f"- **Fit:** {score.fit_score}/100 — {score.reason}",
-        f"- **Match:** {_MATCH_LABEL.get(score.match_kind, score.match_kind)}",
-        f"- **Apply at:** {posting.url}",
-    ]
-    if notes:
-        lines.append(f"- **⚠️ Auto-corrected:** {'; '.join(notes)} — review before sending.")
-    lines += ["", "---", ""]
-    return "\n".join(lines) + _render_resume(parsed, tailored) + "\n"
+def pdf_filename(company, title, job_id):
+    """PDF counterpart of safe_filename. Company/title/job_id come from a scraper
+    and are never trusted as path components."""
+    return safe_filename(company, title, job_id).rsplit(".md", 1)[0] + ".pdf"
+
+
+def render_index(entries, window, skipped_count):
+    lines = [f"# Tailored résumés — {window} window", ""]
+
+    if not entries:
+        lines += ["No résumés were written this run.", ""]
+    for entry in entries:
+        label = _MATCH_LABEL.get(entry["match_kind"], entry["match_kind"])
+        lines += [
+            f"## {entry['company']} — {entry['title']}",
+            "",
+            f"- **Fit:** {entry['fit_score']}/100 — {entry['reason']}",
+            f"- **Match:** {label}",
+            f"- **Apply at:** {entry['apply_url']}",
+            f"- **PDF:** `{entry['pdf_filename']}`",
+            f"- **Edit in Canva:** {entry['canva_edit_url']}",
+        ]
+        if entry.get("corrections"):
+            lines.append(
+                f"- **⚠️ Auto-corrected:** {'; '.join(entry['corrections'])} — "
+                f"review before sending.")
+        lines.append("")
+
+    lines += ["---", "", f"{len(entries)} résumé(s) written. "
+                         f"{skipped_count} other job(s) judged and skipped.", ""]
+    return "\n".join(lines)

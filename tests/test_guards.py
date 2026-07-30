@@ -1,4 +1,3 @@
-from render import render_output
 from resume import parse_resume
 from tailoring import TailoredCV, TailoredEntry, repair_entry_coverage, strip_invented_skills
 
@@ -35,16 +34,6 @@ Python, SQL, Docker
 PARSED = parse_resume(BASE_MD)
 
 
-class FakePosting:
-    url = "https://example.com/job"
-
-
-class FakeScore:
-    fit_score = 78
-    reason = "Good fit."
-    match_kind = "stretch"
-
-
 def test_dirty_cv_is_repaired_kept_and_annotated():
     # Invented skill (Kubernetes), a dropped job (entry [1]), a bad project index.
     dirty = TailoredCV(
@@ -58,21 +47,23 @@ def test_dirty_cv_is_repaired_kept_and_annotated():
     repaired, coverage_notes = repair_entry_coverage(cleaned, PARSED)
     notes = ([f"removed unverified skills: {', '.join(removed)}"] if removed else []) + coverage_notes
 
-    out = render_output(FakePosting(), FakeScore(), PARSED, repaired, notes)
+    # Nothing was dropped — both experience entries are referenced (the missing
+    # job, index 1, was rebuilt rather than silently lost).
+    exp_indices = {e.entry_index for e in repaired.experience}
+    assert exp_indices == {0, 1}
 
-    # The banner (above the '---') records corrections; the résumé body is below it.
-    metadata, _, body = out.partition("---")
+    # The rebuilt entry carries its original bullets from the base CV.
+    rebuilt = next(e for e in repaired.experience if e.entry_index == 1)
+    assert "Wrote scripts." in rebuilt.bullets
 
-    # Nothing was dropped — the résumé body is complete.
-    assert "### Backend Developer | Acme" in body
-    assert "### Intern | Beta" in body          # the dropped job was rebuilt
-    assert "Wrote scripts." in body             # with its original bullets
-    assert "### Todo App" in body               # the bad project index was repaired
-    assert "Python" in body
+    # The bad project index (9) was repaired to reference the one valid project (0).
+    proj_indices = {p.entry_index for p in repaired.projects}
+    assert 9 not in proj_indices
+    assert proj_indices == {0}
 
-    # The invented skill is gone from the résumé body...
-    assert "Kubernetes" not in body
-    # ...but the correction is surfaced in the banner above the résumé for review.
-    assert "Auto-corrected" in metadata
-    assert "removed unverified skills: Kubernetes" in metadata
-    assert out.index("Auto-corrected") < out.index("# Cand")
+    # The invented skill is gone; genuine skills remain.
+    assert "Kubernetes" not in repaired.skills
+    assert "Python" in repaired.skills
+
+    # ...and the correction is reported for operator review.
+    assert any("removed unverified skills: Kubernetes" in note for note in notes)
