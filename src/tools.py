@@ -33,8 +33,22 @@ async def prepare_resume(args: dict) -> dict:
     return _json_result(_prepare_resume_impl(args["job"], args["score"], args["tailored"]))
 
 
+@tool("save_pdf", "Download an exported Canva PDF into this run's output directory.",
+      {"export_url": str, "company": str, "title": str, "job_id": str})
+async def save_pdf(args: dict) -> dict:
+    return _json_result(tooling.save_pdf(args["export_url"], args["company"],
+                                         args["title"], args["job_id"]))
+
+
+@tool("write_index", "Write this run's index.md describing every résumé that was created.",
+      {"entries": list, "window": str, "skipped_count": int})
+async def write_index(args: dict) -> dict:
+    return _json_result(tooling.write_index(args["entries"], args["window"],
+                                            args["skipped_count"]))
+
+
 resume_tools = create_sdk_mcp_server(
     name="resume_tools",
     version="1.0.0",
-    tools=[get_resume, prepare_resume],
+    tools=[get_resume, prepare_resume, save_pdf, write_index],
 )
