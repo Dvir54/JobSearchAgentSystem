@@ -1088,6 +1088,7 @@ model comparing floats."
 - Modify: `src/render.py`
 - Modify: `src/tooling.py`
 - Test: `tests/test_render.py`
+- Test: `tests/test_guards.py` — its `test_dirty_cv_is_repaired_kept_and_annotated` imports `render_output`, which this task deletes. Rewrite it to assert the same facts against the guards' own output (`repaired` and `notes`) instead of a rendered string; the corrections banner now lives in `render_index`.
 - Test: `tests/test_output_tools.py` (create)
 
 **Why the two tools:** `disallowed_tools` blocks `Bash`, `Read`, `Write` and `WebFetch` — deliberately, since unrestricted built-ins are what turned a failed reduction into a $7.19 run. That means **the agent physically cannot save the exported PDF or write `index.md`**. Both need an in-process tool, the same way `prepare_resume` does. `export-design` returns a URL; something has to fetch it and put it on disk.
