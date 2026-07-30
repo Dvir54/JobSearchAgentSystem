@@ -1,7 +1,9 @@
 import asyncio
 import json
 
+import config
 import hooks
+from tooling import strip_invented_skills  # noqa: F401  (proves the guard path is shared)
 
 
 def _hook_input(tool_response, tool_name="mcp__monid__monid_get_run"):
@@ -103,10 +105,6 @@ def test_does_not_pace_when_the_run_completed(monkeypatch):
     assert slept == []
 
 
-import config
-from tooling import strip_invented_skills  # noqa: F401  (proves the guard path is shared)
-
-
 def _canva_input(operations):
     return {"hook_event_name": "PreToolUse",
             "tool_name": "mcp__canva__perform-editing-operations",
@@ -152,3 +150,19 @@ def test_guard_never_raises_on_a_malformed_payload():
            "tool_name": "mcp__canva__perform-editing-operations",
            "tool_input": None, "tool_use_id": "t"}
     assert asyncio.run(hooks.guard_canva_write(bad, "t", {})) == {}
+
+
+def test_guard_allows_legitimate_find_and_replace_text_on_skills():
+    """find_and_replace_text operations carry the new text in replace_text field."""
+    out = _call_guard([{"type": "find_and_replace_text", "element_id": SKILLS_ID,
+                        "find": "Java", "replace_text": "Python\nJava\nSQL"}])
+    assert out == {}
+
+
+def test_guard_denies_invented_skills_via_find_and_replace_text():
+    """Invented skills in find_and_replace_text (replace_text field) must be denied."""
+    out = _call_guard([{"type": "find_and_replace_text", "element_id": SKILLS_ID,
+                        "find": "Java", "replace_text": "Python\nKubernetes"}])
+    decision = out["hookSpecificOutput"]
+    assert decision["permissionDecision"] == "deny"
+    assert "Kubernetes" in decision["permissionDecisionReason"]

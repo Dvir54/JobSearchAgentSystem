@@ -83,7 +83,7 @@ async def guard_canva_write(input, tool_use_id, context):
     for operation in operations:
         if not isinstance(operation, dict) or operation.get("element_id") != skills_id:
             continue
-        text = operation.get("text") or ""
+        text = operation.get("text") or operation.get("replace_text") or ""
         claimed = [line.strip() for line in text.split("\n") if line.strip()]
         if not claimed:
             continue
