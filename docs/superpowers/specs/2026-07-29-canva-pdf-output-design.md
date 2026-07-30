@@ -70,15 +70,15 @@ copy-design(template)            → new design_id (element ids identical)
 start-editing-transaction        → returns element list + dimensions
   ↓
 perform-editing-operations       → one replace_text per mapped element
-  ↳ PreToolUse hook: guards vs base_cv.md → repair via updatedInput, or deny
+  ↳ PreToolUse hook:  guards vs base_cv.md → deny if untruthful
+  ↳ PostToolUse hook: element dump reduced to {ok} | {overflow: {id: px}}
+                      (overflow decided in code, on edited elements only)
   ↓
-OVERFLOW CHECK on the returned dimensions  → cancel + redraft if any block grew too tall
+commit-editing-transaction       (or cancel + redraft, bounded)
   ↓
-commit-editing-transaction       (or cancel-editing-transaction)
+export-design (pdf) → poll
   ↓
-export-design (pdf) → poll → download
-  ↓
-save output/<run-date>/<Company>_<Title>_<job_id>.pdf
+save_pdf  → output/<run-date>/<Company>_<Title>_<job_id>.pdf
 move-item-to-folder → "Job CVs — <run-date>"
 ```
 
@@ -129,15 +129,23 @@ Overflow is the *default* outcome without a check, not an edge case.
   `LENGTH_BUDGET_RATIO` (1.05) times the original's character count. Deterministic, cheap,
   catches gross overruns before a single API call. Note it must stay **above 1.0**:
   reordering skills is length-preserving, so a sub-1.0 ratio would reject every run.
-- **Detection — height read-back.** `perform-editing-operations` returns *recomputed*
-  `dimension.height` for every element **before commit**. Compare each edited element's new
-  bottom edge against the top of the next element below it in the same column. If any
-  collides: `cancel-editing-transaction`, report which block overflowed and by how much, and
-  let the agent redraft shorter. **Bounded to 2 redraft attempts per job**, then skip the job
-  and record it in the index rather than publish a broken PDF.
+- **Detection — height read-back, decided in code.** `perform-editing-operations` returns
+  *recomputed* `dimension.height` for every element **before commit**. The `PostToolUse`
+  reducer compares each edited element's new height against its capacity and returns
+  `{"ok": true}` or `{"ok": false, "overflow": {element_id: px}}`. On a fail the agent
+  cancels, shortens by roughly the reported overrun, and retries — **bounded to 2 attempts**,
+  then the job is skipped and recorded rather than publishing a broken PDF.
 
-The slack table is computed **once per run from the template design**, not hardcoded, so it
-stays correct if the résumé layout changes.
+  **The agent never compares the numbers itself.** An LLM diffing floats is exactly the kind
+  of check that fails silently; `canva.find_overflows` decides every time.
+
+- **Only edited elements are checked.** Two elements already exceed their capacity in the
+  untouched design — the IBM entry's title and its date overlap the bullets block slightly,
+  which is ordinary layout. Checking every element would report a false overflow on **every
+  job**, so the check is scoped to the ids we actually wrote.
+
+Capacities are computed **once per transaction from the design itself**, not hardcoded, so
+they stay correct if the résumé layout changes.
 
 ## One write mode: `replace_text`
 
@@ -235,7 +243,8 @@ metadata formatting survives, relocated into the index writer.
 | `config.py` | `CANVA_TEMPLATE_DESIGN_ID`, `CANVA_ELEMENT_MAP`, `CANVA_FOLDER_PREFIX`, `MAX_REDRAFT_ATTEMPTS = 2`, `LENGTH_BUDGET_RATIO = 0.95` |
 | `canva.py` *(new)* | Deterministic, SDK-free: build `replace_text` operations from the edit plan, compute the slack table from a design's elements, detect overflow from returned dimensions, parse export/download responses. Fully unit-testable. |
 | `tooling.py` | `write_tailored_resume` → `prepare_resume`: same gate and guards, returns `{element_id: text}` + corrections instead of writing markdown. Adds the length budget. |
-| `hooks.py` | Second hook: `PreToolUse` on `perform-editing-operations`, enforcing guards on what is actually sent. |
+| `hooks.py` | Two more hooks: a `PreToolUse` guard on `perform-editing-operations` enforcing the truthfulness guards on what is actually sent, and a `PostToolUse` reducer on the Canva transaction tools that keeps the element dumps out of context and returns the overflow verdict. |
+| `tooling.py` | Also gains `run_dir`, `save_pdf`, `write_index` — the agent has no file-writing tool, by design. |
 | `agent.py` | Canva MCP in `mcp_servers`; Canva tools in `allowed_tools`; `WORKFLOW` rewritten for the per-job sequence, the overflow-redraft loop, and the folder step. **`CV_EDITOR_RULES` is unchanged for the summary** and drops only the reorder instruction. The summary stays a freely tailored plain paragraph, as today. |
 | `render.py` | Résumé rendering deleted; metadata rendering becomes the index writer. |
 | `tools.py` | `write_resume` tool replaced by `prepare_resume`. |
