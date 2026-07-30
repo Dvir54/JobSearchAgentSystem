@@ -68,3 +68,40 @@ def validate_map(elements, element_map, validate_only_ids):
         if eid not in elements:
             problems.append(f"validate-only element_id {eid!r} not found in the design")
     return problems
+
+
+def build_operations(edits, element_map):
+    """Turn a slot→text edit plan into Canva editing operations.
+
+    Every slot is overwritten wholesale with replace_text. That flattens inline
+    formatting inside the element — accepted, because only the About Me paragraph
+    has any, and block-level formatting (bullets, font, colour) is preserved.
+    """
+    operations = []
+    for slot, text in edits.items():
+        eid = element_map[slot]             # KeyError on an unknown slot is correct
+        operations.append({"type": "replace_text", "element_id": eid, "text": text})
+    return operations
+
+
+def find_overflows(elements_after, capacity, only_ids):
+    """Edited elements whose post-edit height exceeds the space available to them.
+
+    `perform-editing-operations` returns recomputed heights BEFORE commit, so this
+    runs on the draft and the transaction can still be cancelled.
+
+    `only_ids` is required, not optional: some elements overlap their neighbours in
+    the untouched design (a title box and its bullets, for instance), so checking
+    everything would report a false overflow on every job. Only what we wrote is
+    our responsibility.
+    """
+    overflows = {}
+    for eid in only_ids:
+        element = elements_after.get(eid)
+        if element is None:
+            continue
+        available = capacity.get(eid, float("inf"))
+        if element["height"] > available:
+            overflows[eid] = {"height": element["height"], "capacity": available,
+                              "overflow_px": element["height"] - available}
+    return overflows

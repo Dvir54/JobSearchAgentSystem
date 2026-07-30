@@ -119,3 +119,68 @@ def test_validate_map_reports_missing_validate_only_id():
     problems = validate_map(els, {}, [f"{PAGE}-NOPE"])
     assert len(problems) == 1
     assert "NOPE" in problems[0]
+
+
+from canva import build_operations, find_overflows
+
+SUMMARY = f"{PAGE}-LBrJ8LlFHVgPZm7d"
+SKILLS = f"{PAGE}-LBkVtV7y5fKZMm0H"
+
+MAP = {"summary": SUMMARY, "skills": SKILLS}
+
+
+def test_build_operations_emits_one_replace_text_per_slot():
+    ops = build_operations({"skills": "Python\nJava\nSQL"}, MAP)
+    assert ops == [{"type": "replace_text", "element_id": SKILLS, "text": "Python\nJava\nSQL"}]
+
+
+def test_build_operations_handles_several_slots():
+    ops = build_operations({"summary": "A tailored paragraph.", "skills": "Python"}, MAP)
+    assert len(ops) == 2
+    assert all(o["type"] == "replace_text" for o in ops)
+    assert {o["element_id"] for o in ops} == {SUMMARY, SKILLS}
+    assert next(o["text"] for o in ops if o["element_id"] == SUMMARY) == "A tailored paragraph."
+
+
+def test_unknown_slot_is_rejected():
+    with pytest.raises(KeyError):
+        build_operations({"nonexistent": "x"}, MAP)
+
+
+EDITED = [SUMMARY, SKILLS]
+
+
+def test_find_overflows_flags_an_edited_element_past_capacity():
+    els = parse_elements(sample_richtexts())
+    caps = compute_capacity(els)
+    after = {k: dict(v) for k, v in els.items()}
+    after[SKILLS]["height"] = caps[SKILLS] + 12.5        # 12.5px too tall
+
+    overflows = find_overflows(after, caps, EDITED)
+    assert set(overflows) == {SKILLS}
+    assert overflows[SKILLS]["overflow_px"] == pytest.approx(12.5, abs=1e-6)
+
+
+def test_find_overflows_empty_when_the_edited_elements_fit():
+    els = parse_elements(sample_richtexts())
+    assert find_overflows(els, compute_capacity(els), EDITED) == {}
+
+
+def test_find_overflows_ignores_elements_we_did_not_edit():
+    # The IBM title and its date ALREADY exceed their capacity in the untouched
+    # design - overlapping boxes are normal layout. Checking every element would
+    # report a false overflow on every single job, so only edited ids are checked.
+    els = parse_elements(sample_richtexts())
+    caps = compute_capacity(els)
+    title = f"{PAGE}-LB6dWjhqhy865bfK"
+    assert els[title]["height"] > caps[title]            # genuinely over, by design
+    assert title not in find_overflows(els, caps, EDITED)
+
+
+def test_find_overflows_tolerates_infinite_capacity():
+    els = parse_elements(sample_richtexts())
+    caps = compute_capacity(els)
+    lowest = f"{PAGE}-LBg8GQtPpRxyCqhn"
+    after = {k: dict(v) for k, v in els.items()}
+    after[lowest]["height"] = 9999
+    assert find_overflows(after, caps, [lowest]) == {}
