@@ -477,7 +477,7 @@ can still be cancelled."
 - Consumes: `config.CANVA_ELEMENT_MAP`, `config.LENGTH_BUDGET_RATIO` (Task 1); existing `strip_invented_skills`, `repair_entry_coverage`, `parse_resume`.
 - Produces: `tooling.prepare_resume(job, score, tailored) -> dict` with keys `rejected` (bool), `reason` (str), `corrections` (list[str]), `edits` (dict slot→content).
 
-`edits` uses the same slot names as `config.CANVA_ELEMENT_MAP`: `"summary"` → list of 5 strings, `"skills"` → newline-joined string, `"experience.N.bullets"` → newline-joined string.
+`edits` uses the same slot names as `config.CANVA_ELEMENT_MAP`, and every value is a **single string**: `"summary"` → the tailored paragraph as written, `"skills"` → newline-joined, `"experience.N.bullets"` → newline-joined.
 
 - [ ] **Step 1: Write the failing tests**
 
