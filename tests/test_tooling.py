@@ -126,6 +126,52 @@ def test_prepare_still_strips_invented_skills():
     assert any("Kubernetes" in c for c in out["corrections"])
 
 
+def test_prepare_repairs_out_of_range_entry_index():
+    # Real base_cv (used by the guards) has exactly 2 experience entries; index 9
+    # doesn't exist, so repair_entry_coverage must drop it and re-add entries
+    # [0] and [1] with their original bullets, and both must reach edits.
+    tailored = _tailored_ok()
+    tailored["experience"] = [{"entry_index": 9, "bullets": ["Reworded."]}]
+    out = prepare_resume(_job(), _score(), tailored)
+    assert out["rejected"] is False
+    assert any("out-of-range" in c for c in out["corrections"])
+    assert "experience.0.bullets" in out["edits"]
+    assert "experience.1.bullets" in out["edits"]
+
+
+def test_prepare_accepts_skills_as_comma_separated_string():
+    # get_resume's own view returns skills as a string; prepare_resume must accept
+    # the exact format its sibling tool emits, not iterate it char-by-char.
+    tailored = _tailored_ok()
+    tailored["skills"] = "Python, Kubernetes"
+    out = prepare_resume(_job(), _score(), tailored)
+    assert out["rejected"] is False
+    kubernetes_notes = [c for c in out["corrections"] if "Kubernetes" in c]
+    assert kubernetes_notes and "P, y, t" not in kubernetes_notes[0]
+    assert "removed unverified skills: Kubernetes" in kubernetes_notes[0]
+    assert out["edits"]["skills"] == "Python"
+
+
+def test_prepare_rejects_skills_of_unsupported_type():
+    tailored = _tailored_ok()
+    tailored["skills"] = 42
+    out = prepare_resume(_job(), _score(), tailored)
+    assert out["rejected"] is True
+    assert out["edits"] == {}
+    assert out["corrections"] == []
+    assert "int" in out["reason"]
+
+
+def test_prepare_rejects_entry_missing_entry_index_key():
+    tailored = _tailored_ok()
+    tailored["experience"] = [{"index": 0, "bullets": ["Reworded."]}]
+    out = prepare_resume(_job(), _score(), tailored)
+    assert out["rejected"] is True
+    assert "entry_index" in out["reason"]
+    assert out["edits"] == {}
+    assert out["corrections"] == []
+
+
 def test_prepare_rejects_text_over_the_length_budget():
     tailored = _tailored_ok()
     tailored["experience"] = [{"entry_index": 0, "bullets": ["x" * 5000]}]
