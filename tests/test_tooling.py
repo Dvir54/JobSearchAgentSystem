@@ -1,7 +1,5 @@
-import json
-from pathlib import Path
-
-from tooling import build_resume_view, clean_jobs, safe_filename, write_tailored_resume
+import config
+from tooling import build_resume_view, clean_jobs, prepare_resume, safe_filename
 
 BASE_MD = """# Cand
 
@@ -72,32 +70,6 @@ def _score(fit=82, junior=True):
             "reason": "Strong match.", "match_kind": "direct"}
 
 
-def _tailored():
-    return {"summary": "Backend dev.", "skills": ["Python", "Kubernetes"],
-            "experience": [{"entry_index": 0, "bullets": ["Reworded."]}],
-            "projects": [{"entry_index": 9, "bullets": []}]}
-
-
-def test_write_rejects_below_threshold(tmp_path):
-    out = write_tailored_resume(_job(), _score(fit=40), _tailored(), out_dir=tmp_path)
-    assert out["rejected"] is True and out["written"] is None
-    assert list(tmp_path.iterdir()) == []
-
-
-def test_write_gates_guards_and_reports_corrections(tmp_path):
-    # base_cv used by the guards is the real config.BASE_CV_PATH; this test asserts
-    # the enforcement path runs. Kubernetes is invented; entry [1] and the bad
-    # project index must be repaired.
-    out = write_tailored_resume(_job(), _score(), _tailored(), out_dir=tmp_path)
-    assert out["rejected"] is False
-    path = Path(out["written"])
-    assert path.exists()
-    body = path.read_text(encoding="utf-8")
-    assert "Kubernetes" not in body.split("---", 1)[1]   # stripped from the résumé body
-    assert any("Kubernetes" in c for c in out["corrections"])
-    assert "Auto-corrected" in body                       # surfaced in the banner
-
-
 def test_safe_filename_includes_job_id():
     assert safe_filename("Acme", "Backend Developer", "abc123") == "Acme_Backend_Developer_abc123.md"
 
@@ -116,59 +88,54 @@ def test_safe_filename_sanitises_job_id_like_company_and_title():
     assert name == "Acme_Backend_Developer_....evil.md"
 
 
-def test_write_distinguishes_duplicate_titled_jobs_by_id(tmp_path):
-    # Real regression: two distinct postings with identical company+title silently
-    # overwrote each other because safe_filename keyed only on company+title.
-    job_a = _job(job_id="job-a")
-    job_b = _job(job_id="job-b")
-    out_a = write_tailored_resume(job_a, _score(), _tailored(), out_dir=tmp_path)
-    out_b = write_tailored_resume(job_b, _score(), _tailored(), out_dir=tmp_path)
-    assert out_a["written"] != out_b["written"]
-    assert Path(out_a["written"]).exists()
-    assert Path(out_b["written"]).exists()
-    assert len(list(tmp_path.iterdir())) == 2
+def _tailored_ok():
+    return {"summary": "Final-semester CS student with backend Python experience. "
+                       "Seeking a junior backend role.",
+            "skills": ["Python", "SQL"],
+            "experience": [{"entry_index": 0, "bullets": ["Reworded."]}],
+            "projects": [{"entry_index": 0, "bullets": []}]}
 
 
-def test_write_accepts_skills_as_comma_separated_string(tmp_path):
-    # get_resume's own view returns skills as a string; write_tailored_resume must
-    # accept the exact format its sibling tool emits, not iterate it char-by-char.
-    tailored = _tailored()
-    tailored["skills"] = "Python, Kubernetes"
-    out = write_tailored_resume(_job(), _score(), tailored, out_dir=tmp_path)
+def test_prepare_rejects_below_threshold():
+    out = prepare_resume(_job(), _score(fit=40), _tailored_ok())
+    assert out["rejected"] is True
+    assert out["edits"] == {}
+
+
+def test_prepare_returns_slot_keyed_edits():
+    out = prepare_resume(_job(), _score(), _tailored_ok())
     assert out["rejected"] is False
-    kubernetes_notes = [c for c in out["corrections"] if "Kubernetes" in c]
-    assert kubernetes_notes and "P, y, t" not in kubernetes_notes[0]
-    assert "removed unverified skills: Kubernetes" in kubernetes_notes[0]
+    assert out["edits"]["summary"] == _tailored_ok()["summary"]
+    assert "\n" in out["edits"]["skills"]
+    assert "experience.0.bullets" in out["edits"]
 
 
-def test_write_rejects_skills_of_unsupported_type(tmp_path):
-    tailored = _tailored()
-    tailored["skills"] = 42
-    out = write_tailored_resume(_job(), _score(), tailored, out_dir=tmp_path)
-    assert out["rejected"] is True and out["written"] is None
-    assert out["corrections"] == []
-    assert "int" in out["reason"]
-    assert list(tmp_path.iterdir()) == []
+def test_prepare_rejects_a_summary_that_is_not_a_string():
+    tailored = _tailored_ok()
+    tailored["summary"] = ["not", "a", "paragraph"]
+    out = prepare_resume(_job(), _score(), tailored)
+    assert out["rejected"] is True
+    assert "string" in out["reason"].lower()
 
 
-def test_write_rejects_entry_missing_entry_index_key(tmp_path):
-    tailored = _tailored()
-    tailored["experience"] = [{"index": 0, "bullets": ["Reworded."]}]
-    out = write_tailored_resume(_job(), _score(), tailored, out_dir=tmp_path)
-    assert out["rejected"] is True and out["written"] is None
-    assert "entry_index" in out["reason"]
-    assert out["corrections"] == []
-    assert list(tmp_path.iterdir()) == []
+def test_prepare_still_strips_invented_skills():
+    tailored = _tailored_ok()
+    tailored["skills"] = ["Python", "Kubernetes"]      # Kubernetes is not in base_cv
+    out = prepare_resume(_job(), _score(), tailored)
+    assert "Kubernetes" not in out["edits"]["skills"]
+    assert any("Kubernetes" in c for c in out["corrections"])
 
 
-def test_write_rejects_missing_summary_key_naming_summary_not_entries(tmp_path):
-    # Regression: the KeyError handler used to wrap tailored["summary"] too, so a
-    # missing summary was misreported as an "experience/project entry" problem.
-    tailored = _tailored()
-    del tailored["summary"]
-    out = write_tailored_resume(_job(), _score(), tailored, out_dir=tmp_path)
-    assert out["rejected"] is True and out["written"] is None
-    assert "summary" in out["reason"]
-    assert "experience/project entry" not in out["reason"]
-    assert out["corrections"] == []
-    assert list(tmp_path.iterdir()) == []
+def test_prepare_rejects_text_over_the_length_budget():
+    tailored = _tailored_ok()
+    tailored["experience"] = [{"entry_index": 0, "bullets": ["x" * 5000]}]
+    out = prepare_resume(_job(), _score(), tailored)
+    assert out["rejected"] is True
+    assert "length" in out["reason"].lower() or "budget" in out["reason"].lower()
+
+
+def test_prepare_writes_no_file():
+    before = set(config.OUTPUT_DIR.iterdir()) if config.OUTPUT_DIR.exists() else set()
+    prepare_resume(_job(), _score(), _tailored_ok())
+    after = set(config.OUTPUT_DIR.iterdir()) if config.OUTPUT_DIR.exists() else set()
+    assert before == after

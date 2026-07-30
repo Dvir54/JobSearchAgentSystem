@@ -5,7 +5,6 @@ import json
 import re
 import sys
 from dataclasses import dataclass
-from pathlib import Path
 
 import config
 from config import (
@@ -16,7 +15,6 @@ from config import (
     SUMMARY_SECTION,
 )
 from jobs import normalize_posting
-from render import render_output
 from resume import parse_resume
 from tailoring import (
     TailoredCV,
@@ -68,13 +66,6 @@ def clean_jobs(raw_items):
 
 
 @dataclass
-class _Posting:
-    company: str
-    title: str
-    url: str
-
-
-@dataclass
 class _Score:
     is_junior_friendly: bool
     fit_score: int
@@ -102,40 +93,42 @@ def safe_filename(company, title, job_id=None):
     return f"{c}_{t}.md"
 
 
-def write_tailored_resume(job, score, tailored, out_dir=None):
-    """The enforcement boundary. Gates on relevance, strips invented skills, repairs
-    entry coverage, renders, and writes. Returns what it wrote or why it refused.
-    The agent cannot write a résumé any other way."""
-    out_dir = Path(out_dir) if out_dir else config.OUTPUT_DIR
+def _budget_exceeded(new_text, original_text):
+    return len(new_text) > len(original_text) * config.LENGTH_BUDGET_RATIO
+
+
+def prepare_resume(job, score, tailored):
+    """The deterministic half of the enforcement boundary.
+
+    Gates on relevance, strips invented skills, repairs entry coverage, and checks
+    the length budget, then returns a slot-keyed edit plan for the Canva writer.
+    It writes nothing: the PreToolUse hook on perform-editing-operations is what
+    actually holds the line, because the agent makes the Canva calls itself.
+    """
+    def _reject(reason):
+        return {"rejected": True, "reason": reason, "corrections": [], "edits": {}}
+
     s = _Score(**{k: score[k] for k in ("is_junior_friendly", "fit_score", "reason", "match_kind")})
-
     if not (s.is_junior_friendly and s.fit_score >= config.FIT_THRESHOLD):
-        return {"written": None, "rejected": True,
-                "reason": f"below threshold or not junior-friendly (fit {s.fit_score})",
-                "corrections": []}
+        return _reject(f"below threshold or not junior-friendly (fit {s.fit_score})")
 
-    skills = tailored["skills"]
+    summary = tailored.get("summary")
+    if not isinstance(summary, str):
+        return _reject(f"summary must be a single paragraph string, got "
+                       f"{type(summary).__name__}")
+
+    skills = tailored.get("skills")
     if isinstance(skills, (list, tuple)):
         skills = list(skills)
     elif isinstance(skills, str):
-        # get_resume's own view returns skills as a comma-separated string; accept
-        # the exact format our own API emits rather than iterating it char-by-char.
-        skills = [s.strip() for s in skills.split(",") if s.strip()]
+        skills = [part.strip() for part in skills.split(",") if part.strip()]
     else:
-        return {"written": None, "rejected": True,
-                "reason": f"skills must be a list or comma-separated string, got "
-                          f"{type(skills).__name__}",
-                "corrections": []}
+        return _reject(f"skills must be a list or comma-separated string, got "
+                       f"{type(skills).__name__}")
 
-    if "summary" not in tailored:
-        return {"written": None, "rejected": True,
-                "reason": "tailored resume is missing required key 'summary'",
-                "corrections": []}
-    summary = tailored["summary"]
-
+    base_cv = config.BASE_CV_PATH.read_text(encoding="utf-8")
+    parsed = parse_resume(base_cv)
     try:
-        base_cv = config.BASE_CV_PATH.read_text(encoding="utf-8")
-        parsed = parse_resume(base_cv)
         tcv = TailoredCV(
             summary=summary,
             skills=skills,
@@ -145,21 +138,35 @@ def write_tailored_resume(job, score, tailored, out_dir=None):
                       for p in tailored["projects"]],
         )
     except KeyError as exc:
-        return {"written": None, "rejected": True,
-                "reason": f"experience/project entry missing required key {exc}",
-                "corrections": []}
+        return _reject(f"experience/project entry missing required key {exc}")
 
     tcv, removed = strip_invented_skills(tcv, base_cv)
     tcv, notes = repair_entry_coverage(tcv, parsed)
     if removed:
         notes = [f"removed unverified skills: {', '.join(removed)}"] + notes
 
-    posting = _Posting(company=job["company"], title=job["title"], url=job["url"])
-    content = render_output(posting, s, parsed, tcv, notes)
-    out_dir.mkdir(parents=True, exist_ok=True)
-    path = out_dir / safe_filename(job["company"], job["title"], job.get("id"))
-    path.write_text(content, encoding="utf-8")
-    return {"written": str(path), "rejected": False, "reason": "", "corrections": notes}
+    # Skills may have been stripped; rebuild the summary regions only if a skill
+    # name was removed from them is NOT attempted — the guards own skills, not prose.
+    edits = {"summary": summary, "skills": "\n".join(tcv.skills)}
+
+    experience_section = parsed.get(EXPERIENCE_SECTION)
+    base_entries = experience_section.entries if experience_section else []
+    for entry in tcv.experience:
+        slot = f"experience.{entry.entry_index}.bullets"
+        if slot not in config.CANVA_ELEMENT_MAP:
+            continue                      # entry exists in base_cv but not in the design
+        edits[slot] = "\n".join(entry.bullets)
+        original = "\n".join(base_entries[entry.entry_index].bullets)
+        if _budget_exceeded(edits[slot], original):
+            return _reject(
+                f"slot {slot!r} exceeds the length budget "
+                f"({len(edits[slot])} chars vs {len(original)} original)")
+
+    summary_section = parsed.get(SUMMARY_SECTION)
+    if summary_section and _budget_exceeded(summary, summary_section.body.strip()):
+        return _reject("slot 'summary' exceeds the length budget")
+
+    return {"rejected": False, "reason": "", "corrections": notes, "edits": edits}
 
 
 def _window(run):
