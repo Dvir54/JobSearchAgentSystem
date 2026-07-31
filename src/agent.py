@@ -170,26 +170,40 @@ Follow this workflow exactly:
    b. If the job is NOT junior-friendly or `fit_score` < {config.FIT_THRESHOLD},
       skip it — no Canva copy, no PDF. Just note it as skipped.
    c. Otherwise draft the tailored fields using the CV-editor rules below, then call
-      `prepare_resume` with the job, your score, and those fields. If it returns
-      `rejected: true`, note the reason and move on — do NOT touch Canva.
+      `prepare_resume` with `job` as an object with ONLY `id`, `title`, `company`, and
+      `url` (never the posting's description text — `prepare_resume` doesn't use it),
+      your score, and those fields. If it returns `rejected: true`, note the reason
+      and move on — do NOT touch Canva. On success it returns both `edits` (for your
+      own records) and `operations` — the exact Canva operations to send.
    d. Call `copy-design` with design_id {config.CANVA_TEMPLATE_DESIGN_ID!r}. Keep the
       new design's id and its edit URL.
    e. Call `start-editing-transaction` on that new design. Keep the transaction id.
-   f. Call `perform-editing-operations` with the operations for the `edits` returned
-      by `prepare_resume` - one `replace_text` per slot, carrying the full new text.
+   f. Call `perform-editing-operations` passing the `operations` array `prepare_resume`
+      returned VERBATIM — together with the transaction id and `page_index: 1`. Do NOT
+      construct, reorder, or edit the operations yourself; send exactly what was
+      returned.
    g. The response is `{{"ok": bool, "overflow": {{element_id: px}}, "failed_operations":
       [...]}}`. The overflow check is done for you in code — do NOT try to compare
-      element heights yourself. If `ok` is true, continue to (h). If `ok` is false there
-      are two distinct cases, and they call for different responses:
-      - `overflow` is non-empty: call `cancel-editing-transaction`, shorten the named
-        blocks by roughly the reported pixel overrun, and retry from step (e) —
-        cancelling leaves the copied design itself pristine, so there is no need to
-        copy it again. Retry at most {config.MAX_REDRAFT_ATTEMPTS} times. After that,
-        skip the job and record it.
-      - `failed_operations` is non-empty: the edit itself was rejected for a reason
-        unrelated to overflow. There is no block to shorten and no point retrying the
-        same operations — call `cancel-editing-transaction`, record the failure, and
-        move on to the next job.
+      element heights yourself.
+      - If the response has NO `ok` field at all, the overflow check did not run (the
+        payload could not be read) — call `cancel-editing-transaction`, record the job
+        as skipped, and move on. Do NOT commit.
+      - If `ok` is true, continue to (h).
+      - If `ok` is false there are two distinct cases, and they call for different
+        responses:
+        - `overflow` is non-empty: call `cancel-editing-transaction`. Shorten the
+          named blocks yourself by roughly the reported pixel overrun, then call
+          `prepare_resume` again with the job, your score, and the shortened tailored
+          fields — this re-applies every guard (relevance, invented skills, entry
+          coverage, length budget) to the redraft, exactly as the first attempt. Take
+          the `operations` it returns and resume at step (e) using the SAME copied
+          design from step (d) — do not call `copy-design` again. Retry at most
+          {config.MAX_REDRAFT_ATTEMPTS} times total. After that, skip the job and
+          record it.
+        - `failed_operations` is non-empty: the edit itself was rejected for a reason
+          unrelated to overflow. There is no block to shorten and no point retrying the
+          same operations — call `cancel-editing-transaction`, record the failure, and
+          move on to the next job.
       NEVER commit a design whose response was not `ok`.
    h. Call `commit-editing-transaction`.
    i. Call `get-export-formats` for this design first — `export-design` requires it and
@@ -292,8 +306,12 @@ def build_options() -> "ClaudeAgentOptions":
             "PostToolUse": [
                 HookMatcher(matcher="mcp__monid__monid_get_run",
                             hooks=[hooks.reduce_monid_output]),
-                # Each of these returns the WHOLE design (~13-16KB); the reducer
-                # keeps the geometry in-process and returns an overflow verdict.
+                # start-editing-transaction and perform-editing-operations each
+                # return the WHOLE design (~13-16KB); the reducer keeps the geometry
+                # in-process and returns an overflow verdict. commit/cancel are NOT
+                # reduced — their (small) responses pass through untouched; these two
+                # matchers exist only so the hook can release the retained geometry
+                # for that transaction_id.
                 HookMatcher(matcher="mcp__canva__start-editing-transaction",
                             hooks=[hooks.reduce_canva_output]),
                 HookMatcher(matcher="mcp__canva__perform-editing-operations",

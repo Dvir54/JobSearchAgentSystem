@@ -6,6 +6,7 @@ import re
 import sys
 from dataclasses import dataclass
 
+import canva
 import config
 from config import (
     EXPERIENCE_SECTION,
@@ -101,12 +102,15 @@ def prepare_resume(job, score, tailored):
     """The deterministic half of the enforcement boundary.
 
     Gates on relevance, strips invented skills, repairs entry coverage, and checks
-    the length budget, then returns a slot-keyed edit plan for the Canva writer.
-    It writes nothing: the PreToolUse hook on perform-editing-operations is what
-    actually holds the line, because the agent makes the Canva calls itself.
+    the length budget, then returns a slot-keyed edit plan AND the ready-to-send
+    Canva `operations` built from it (via canva.build_operations), so the agent
+    never has to map a slot name to an element_id itself. It writes nothing: the
+    PreToolUse hook on perform-editing-operations is what actually holds the line,
+    because the agent makes the Canva calls itself.
     """
     def _reject(reason):
-        return {"rejected": True, "reason": reason, "corrections": [], "edits": {}}
+        return {"rejected": True, "reason": reason, "corrections": [], "edits": {},
+                "operations": []}
 
     s = _Score(**{k: score[k] for k in ("is_junior_friendly", "fit_score", "reason", "match_kind")})
     if not (s.is_junior_friendly and s.fit_score >= config.FIT_THRESHOLD):
@@ -166,7 +170,9 @@ def prepare_resume(job, score, tailored):
     if summary_section and _budget_exceeded(summary, summary_section.body.strip()):
         return _reject("slot 'summary' exceeds the length budget")
 
-    return {"rejected": False, "reason": "", "corrections": notes, "edits": edits}
+    operations = canva.build_operations(edits, config.CANVA_ELEMENT_MAP)
+    return {"rejected": False, "reason": "", "corrections": notes, "edits": edits,
+            "operations": operations}
 
 
 def _window(run):

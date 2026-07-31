@@ -18,9 +18,12 @@ def parse_elements(richtexts):
         container = item.get("containerElement") or {}
         if container.get("type") != "TEXT":
             continue
+        element_id = item.get("element_id")
+        if not element_id:
+            continue                       # malformed element: nothing to key by
         position = container.get("position") or {}
         dimension = container.get("dimension") or {}
-        elements[item["element_id"]] = {
+        elements[element_id] = {
             "top": position.get("top", 0.0),
             "left": position.get("left", 0.0),
             "width": dimension.get("width", 0.0),

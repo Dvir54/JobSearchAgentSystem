@@ -9,11 +9,13 @@ dict, so it stays unit-testable without the SDK. agent.py does the registering.
 """
 import asyncio
 import json
+import re
 import sys
 
 import canva
 import config
 import tooling
+from resume import parse_resume
 from tailoring import TailoredCV, strip_invented_skills
 
 # The harvestapi scrape is async and takes ~45s-2min. The agent has no clock and
@@ -59,8 +61,41 @@ def _skills_element_id():
     return config.CANVA_ELEMENT_MAP["skills"]
 
 
+_BULLETS_SLOT_RE = re.compile(r"^experience\.(\d+)\.bullets$")
+
+
+def _bullet_entry_index_by_element():
+    """element_id -> entry_index, for every mapped `experience.N.bullets` slot."""
+    result = {}
+    for slot, eid in config.CANVA_ELEMENT_MAP.items():
+        match = _BULLETS_SLOT_RE.match(slot)
+        if match:
+            result[eid] = int(match.group(1))
+    return result
+
+
+def _expected_bullet_counts(base_cv):
+    """entry_index -> bullet count, parsed from base_cv.md's Work Experience
+    section — the same source prepare_resume gates against."""
+    section = parse_resume(base_cv).get(config.EXPERIENCE_SECTION)
+    if not section:
+        return {}
+    return {i: len(entry.bullets) for i, entry in enumerate(section.entries)}
+
+
+def _deny(reason):
+    return {
+        "hookSpecificOutput": {
+            "hookEventName": "PreToolUse",
+            "permissionDecision": "deny",
+            "permissionDecisionReason": reason,
+        }
+    }
+
+
 async def guard_canva_write(input, tool_use_id, context):
-    """Deny a Canva write that would publish a skill the base CV does not support.
+    """Deny a Canva write that would publish a skill the base CV does not support,
+    or that adds/drops/splits/merges bullets in a mapped experience entry.
 
     prepare_resume computes the correct text, but the AGENT makes the Canva calls —
     an in-process tool cannot call an MCP server — so this hook is the real
@@ -81,28 +116,41 @@ async def guard_canva_write(input, tool_use_id, context):
         return {}
 
     skills_id = _skills_element_id()
+    bullets_entry_by_element = _bullet_entry_index_by_element()
     base_cv = config.BASE_CV_PATH.read_text(encoding="utf-8")
+    expected_bullet_counts = _expected_bullet_counts(base_cv)
 
     for operation in operations:
-        if not isinstance(operation, dict) or operation.get("element_id") != skills_id:
+        if not isinstance(operation, dict):
             continue
+        element_id = operation.get("element_id")
         text = operation.get("text") or operation.get("replace_text") or ""
-        claimed = [line.strip() for line in text.split("\n") if line.strip()]
-        if not claimed:
-            continue
-        probe = TailoredCV(summary="", skills=claimed, experience=[], projects=[])
-        _, removed = strip_invented_skills(probe, base_cv)
-        if removed:
-            return {
-                "hookSpecificOutput": {
-                    "hookEventName": "PreToolUse",
-                    "permissionDecision": "deny",
-                    "permissionDecisionReason": (
+
+        if element_id == skills_id:
+            claimed = [line.strip() for line in text.split("\n") if line.strip()]
+            if claimed:
+                probe = TailoredCV(summary="", skills=claimed, experience=[], projects=[])
+                _, removed = strip_invented_skills(probe, base_cv)
+                if removed:
+                    return _deny(
                         f"These skills are not supported by base_cv.md and must not be "
                         f"published: {', '.join(removed)}. Cancel the transaction, drop "
-                        f"them, and try again."),
-                }
-            }
+                        f"them, and try again.")
+            continue
+
+        entry_index = bullets_entry_by_element.get(element_id)
+        if entry_index is None:
+            continue
+        expected = expected_bullet_counts.get(entry_index)
+        if expected is None:
+            continue                       # unparseable/out-of-range: pass through
+        claimed_bullets = [line.strip() for line in text.split("\n") if line.strip()]
+        if len(claimed_bullets) != expected:
+            return _deny(
+                f"experience entry [{entry_index}] has {expected} bullet(s) in "
+                f"base_cv.md, but this write carries {len(claimed_bullets)}. Bullets "
+                f"must not be added, dropped, split, or merged. Cancel the "
+                f"transaction and fix the bullet count.")
     return {}
 
 
@@ -176,6 +224,14 @@ async def reduce_canva_output(input, tool_use_id, context):
             print(f"[canva] DECLINED: no retained geometry for transaction "
                   f"{transaction_id!r}, or unreadable payload; passing through",
                   file=sys.stderr)
+            return {}
+
+        if "edit_operation_results" not in run:
+            print(f"[canva] DECLINED: no edit_operation_results in the "
+                  f"perform-editing-operations payload for transaction "
+                  f"{transaction_id!r} — cannot confirm the writes actually "
+                  f"succeeded; passing through unreduced rather than implying "
+                  f"success", file=sys.stderr)
             return {}
 
         edited = [op.get("element_id") for op in (tool_input.get("operations") or [])

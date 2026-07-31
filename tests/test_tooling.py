@@ -180,6 +180,24 @@ def test_prepare_rejects_text_over_the_length_budget():
     assert "length" in out["reason"].lower() or "budget" in out["reason"].lower()
 
 
+def test_prepare_returns_one_replace_text_operation_per_slot_with_a_real_element_id():
+    out = prepare_resume(_job(), _score(), _tailored_ok())
+    assert out["rejected"] is False
+    ops = out["operations"]
+    assert len(ops) == len(out["edits"])
+    assert {op["element_id"] for op in ops} == set(config.CANVA_ELEMENT_MAP[slot]
+                                                    for slot in out["edits"])
+    for op in ops:
+        assert op["type"] == "replace_text"
+        assert op["element_id"] in config.CANVA_ELEMENT_MAP.values()
+
+
+def test_prepare_rejection_returns_no_operations():
+    out = prepare_resume(_job(), _score(fit=40), _tailored_ok())
+    assert out["rejected"] is True
+    assert out["operations"] == []
+
+
 def test_prepare_writes_no_file():
     before = set(config.OUTPUT_DIR.iterdir()) if config.OUTPUT_DIR.exists() else set()
     prepare_resume(_job(), _score(), _tailored_ok())

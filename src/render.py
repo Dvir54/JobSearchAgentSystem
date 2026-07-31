@@ -19,15 +19,16 @@ def render_index(entries, window, skipped_count):
     if not entries:
         lines += ["No résumés were written this run.", ""]
     for entry in entries:
-        label = _MATCH_LABEL.get(entry["match_kind"], entry["match_kind"])
+        match_kind = entry.get("match_kind", "")
+        label = _MATCH_LABEL.get(match_kind, match_kind or "Unknown")
         lines += [
-            f"## {entry['company']} — {entry['title']}",
+            f"## {entry.get('company', 'Unknown company')} — {entry.get('title', 'Unknown title')}",
             "",
-            f"- **Fit:** {entry['fit_score']}/100 — {entry['reason']}",
+            f"- **Fit:** {entry.get('fit_score', '?')}/100 — {entry.get('reason', '')}",
             f"- **Match:** {label}",
-            f"- **Apply at:** {entry['apply_url']}",
-            f"- **PDF:** `{entry['pdf_filename']}`",
-            f"- **Edit in Canva:** {entry['canva_edit_url']}",
+            f"- **Apply at:** {entry.get('apply_url', '')}",
+            f"- **PDF:** `{entry.get('pdf_filename', '')}`",
+            f"- **Edit in Canva:** {entry.get('canva_edit_url', '')}",
         ]
         if entry.get("corrections"):
             lines.append(

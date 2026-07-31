@@ -26,9 +26,34 @@ async def get_resume(args: dict) -> dict:
     return _json_result(_get_resume_impl())
 
 
+_PREPARE_RESUME_SCHEMA = {
+    "type": "object",
+    "properties": {
+        # Identifying fields only. Never the posting's description text — this
+        # tool doesn't use it, and re-sending it would round-trip the whole
+        # posting as tool arguments once per qualifying job.
+        "job": {
+            "type": "object",
+            "properties": {
+                "id": {"type": "string"},
+                "title": {"type": "string"},
+                "company": {"type": "string"},
+                "url": {"type": "string"},
+            },
+            "required": ["id", "title", "company", "url"],
+        },
+        "score": {"type": "object"},
+        "tailored": {"type": "object"},
+    },
+    "required": ["job", "score", "tailored"],
+}
+
+
 @tool("prepare_resume", "Gate a tailored résumé on relevance, strip invented skills, "
-      "repair entry coverage, check the length budget, and return the Canva edit plan.",
-      {"job": dict, "score": dict, "tailored": dict})
+      "repair entry coverage, check the length budget, and return the Canva edit plan "
+      "(edits plus ready-to-send operations). Pass `job` as identifying fields only — "
+      "id, title, company, url — never the posting's description text.",
+      _PREPARE_RESUME_SCHEMA)
 async def prepare_resume(args: dict) -> dict:
     return _json_result(_prepare_resume_impl(args["job"], args["score"], args["tailored"]))
 

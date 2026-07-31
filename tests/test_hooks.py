@@ -8,6 +8,16 @@ import hooks
 from tooling import strip_invented_skills  # noqa: F401  (proves the guard path is shared)
 
 
+@pytest.fixture(autouse=True)
+def _clear_canva_capacity_state():
+    # _CAPACITY_BY_TRANSACTION is module-level state shared across every test that
+    # touches reduce_canva_output; without this, a transaction id reused between
+    # tests (e.g. "TX1") leaks capacity from one test into the next.
+    hooks._CAPACITY_BY_TRANSACTION.clear()
+    yield
+    hooks._CAPACITY_BY_TRANSACTION.clear()
+
+
 def _hook_input(tool_response, tool_name="mcp__monid__monid_get_run"):
     return {"hook_event_name": "PostToolUse", "tool_name": tool_name,
             "tool_input": {"runId": "01TEST"}, "tool_response": tool_response,
@@ -170,6 +180,36 @@ def test_guard_denies_invented_skills_via_find_and_replace_text():
     assert "Kubernetes" in decision["permissionDecisionReason"]
 
 
+# base_cv.md's Work Experience: entry [0] (IBM Research) has 2 bullets,
+# entry [1] (Ness Technologies) has 1 bullet — these tests depend on that shape.
+EXPERIENCE_0_BULLETS_EL = config.CANVA_ELEMENT_MAP["experience.0.bullets"]
+EXPERIENCE_1_BULLETS_EL = config.CANVA_ELEMENT_MAP["experience.1.bullets"]
+
+
+def test_guard_allows_a_bullet_count_that_matches_base_cv():
+    out = _call_guard([{"type": "replace_text", "element_id": EXPERIENCE_0_BULLETS_EL,
+                        "text": "Reworded bullet one.\nReworded bullet two."}])
+    assert out == {}
+
+
+def test_guard_denies_a_dropped_bullet():
+    out = _call_guard([{"type": "replace_text", "element_id": EXPERIENCE_0_BULLETS_EL,
+                        "text": "Only one bullet now."}])
+    decision = out["hookSpecificOutput"]
+    assert decision["permissionDecision"] == "deny"
+    reason = decision["permissionDecisionReason"]
+    assert "[0]" in reason and "2" in reason and "1" in reason
+
+
+def test_guard_denies_an_added_bullet():
+    out = _call_guard([{"type": "replace_text", "element_id": EXPERIENCE_1_BULLETS_EL,
+                        "text": "Original bullet.\nA brand new invented bullet."}])
+    decision = out["hookSpecificOutput"]
+    assert decision["permissionDecision"] == "deny"
+    reason = decision["permissionDecisionReason"]
+    assert "[1]" in reason and "1" in reason and "2" in reason
+
+
 PAGE = "PB5prZGGYdD17M0v"
 SUMMARY_EL = f"{PAGE}-LBrJ8LlFHVgPZm7d"
 SKILLS_EL = f"{PAGE}-LBkVtV7y5fKZMm0H"
@@ -194,8 +234,9 @@ def _rt_el(eid, top, left, width, height, texts):
             "element_id": eid}
 
 
-def _start_payload(summary_height=69.33332, skills_height=208.959984):
-    return json.dumps({
+def _start_payload(summary_height=69.33332, skills_height=208.959984,
+                   edit_operation_results=None):
+    payload = {
         "transaction": {"status": "open", "transaction_id": "TX1"},
         "richtexts": [
             _rt_el(SUMMARY_EL, 119.31, 314.77, 470.38, summary_height, ["a"]),
@@ -204,7 +245,14 @@ def _start_payload(summary_height=69.33332, skills_height=208.959984):
             _rt_el(f"{PAGE}-vol", 621.98, 42.47, 178.98, 26.46, [" Volunteering"]),
         ],
         "pages": [{"page_id": PAGE, "page_number": 1, "is_responsive": False}],
-    })
+    }
+    # Only a real perform-editing-operations response carries this key. Tests that
+    # exercise the "everything fits" / overflow paths pass it explicitly; tests
+    # that only care about start-editing-transaction, or about the missing-key
+    # pass-through itself, leave it out.
+    if edit_operation_results is not None:
+        payload["edit_operation_results"] = edit_operation_results
+    return json.dumps(payload)
 
 
 def test_start_transaction_is_reduced_to_ids_only():
@@ -221,7 +269,8 @@ def test_start_transaction_is_reduced_to_ids_only():
 
 def test_perform_operations_reports_ok_when_everything_fits():
     _reduce("mcp__canva__start-editing-transaction", _start_payload())
-    out = _reduce("mcp__canva__perform-editing-operations", _start_payload(),
+    out = _reduce("mcp__canva__perform-editing-operations",
+                  _start_payload(edit_operation_results=[]),
                   {"transaction_id": "TX1",
                    "operations": [{"type": "replace_text", "element_id": SKILLS_EL,
                                    "text": "Python"}]})
@@ -234,7 +283,7 @@ def test_perform_operations_reports_overflow_with_the_pixel_amount():
     _reduce("mcp__canva__start-editing-transaction", _start_payload())
     # skills capacity is 621.98 - 403.86 = 218.12; make it 20px taller than that
     out = _reduce("mcp__canva__perform-editing-operations",
-                  _start_payload(skills_height=238.12),
+                  _start_payload(skills_height=238.12, edit_operation_results=[]),
                   {"transaction_id": "TX1",
                    "operations": [{"type": "replace_text", "element_id": SKILLS_EL,
                                    "text": "far too many skills"}]})
@@ -247,12 +296,43 @@ def test_perform_operations_only_judges_the_elements_it_edited():
     _reduce("mcp__canva__start-editing-transaction", _start_payload())
     # the summary is wildly over its capacity, but we only edited skills
     out = _reduce("mcp__canva__perform-editing-operations",
-                  _start_payload(summary_height=9999),
+                  _start_payload(summary_height=9999, edit_operation_results=[]),
                   {"transaction_id": "TX1",
                    "operations": [{"type": "replace_text", "element_id": SKILLS_EL,
                                    "text": "Python"}]})
     payload = json.loads(out["hookSpecificOutput"]["updatedToolOutput"][0]["text"])
     assert payload["ok"] is True
+
+
+def test_perform_operations_reports_failed_operation_as_not_ok():
+    _reduce("mcp__canva__start-editing-transaction", _start_payload())
+    out = _reduce(
+        "mcp__canva__perform-editing-operations",
+        _start_payload(edit_operation_results=[
+            {"status": "error", "operation_info": {"type": "replace_text",
+                                                    "element_id": SKILLS_EL}},
+        ]),
+        {"transaction_id": "TX1",
+         "operations": [{"type": "replace_text", "element_id": SKILLS_EL,
+                         "text": "Python"}]})
+    payload = json.loads(out["hookSpecificOutput"]["updatedToolOutput"][0]["text"])
+    assert payload["ok"] is False
+    assert len(payload["failed_operations"]) == 1
+    assert payload["failed_operations"][0]["status"] == "error"
+
+
+def test_perform_operations_passes_through_when_edit_operation_results_is_absent():
+    # Finding 2: a missing key must NOT be treated as "no failures" — that would
+    # let the agent commit and publish an untailored template as a real success.
+    _reduce("mcp__canva__start-editing-transaction", _start_payload())
+    payload_without_results = _start_payload()   # edit_operation_results omitted
+    assert "edit_operation_results" not in json.loads(payload_without_results)
+    out = _reduce(
+        "mcp__canva__perform-editing-operations", payload_without_results,
+        {"transaction_id": "TX1",
+         "operations": [{"type": "replace_text", "element_id": SKILLS_EL,
+                         "text": "Python"}]})
+    assert out == {}
 
 
 def test_commit_releases_the_stored_geometry():
