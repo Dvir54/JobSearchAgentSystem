@@ -1,93 +1,76 @@
-from pathlib import Path
-
-from render import render_output
-from resume import parse_resume
-from tailoring import TailoredCV, TailoredEntry
-
-SAMPLE = (Path(__file__).parent / "fixtures" / "sample_cv.md").read_text(encoding="utf-8")
-PARSED = parse_resume(SAMPLE)
+from render import pdf_filename, render_index
 
 
-class FakePosting:
-    url = "https://example.com/job"
+def _entry(**overrides):
+    entry = {"company": "Alignerr", "title": "Software Engineer (AI Training)",
+             "fit_score": 88, "match_kind": "direct",
+             "reason": "Python and LLM tooling line up with the internship.",
+             "apply_url": "https://www.linkedin.com/jobs/view/4446167840",
+             "pdf_filename": "Alignerr_Software_Engineer_(AI_Training)_4446167840.pdf",
+             "canva_design_id": "DAHR-XiHc_U",
+             "canva_edit_url": "https://www.canva.com/d/abc123",
+             "corrections": []}
+    entry.update(overrides)
+    return entry
 
 
-class FakeScore:
-    fit_score = 82
-    match_kind = "stretch"
-    reason = "Strong match."
+def test_pdf_filename_uses_job_id_and_pdf_extension():
+    name = pdf_filename("Alignerr", "Software Engineer", "4446167840")
+    assert name.endswith(".pdf")
+    assert "4446167840" in name
 
 
-def _tailored() -> TailoredCV:
-    return TailoredCV(
-        summary="Tailored summary here.",
-        skills=["SQL", "Python", "Git"],
-        experience=[TailoredEntry(entry_index=1, bullets=["Reworded intern bullet."]),
-                    TailoredEntry(entry_index=0, bullets=["Reworded acme bullet."])],
-        projects=[TailoredEntry(entry_index=1, bullets=[]),
-                  TailoredEntry(entry_index=0, bullets=[])],
-    )
+def test_pdf_filename_disambiguates_same_company_and_title():
+    a = pdf_filename("Alignerr", "Software Engineer", "111")
+    b = pdf_filename("Alignerr", "Software Engineer", "222")
+    assert a != b
 
 
-def _out() -> str:
-    return render_output(FakePosting(), FakeScore(), PARSED, _tailored())
+def test_pdf_filename_strips_path_characters():
+    assert "/" not in pdf_filename("A/B", "C:D", "../../evil")
+    assert "\\" not in pdf_filename("A\\B", "C", "1")
 
 
-def test_metadata_block_is_above_the_resume():
-    out = _out()
-    assert out.index("**Fit:** 82/100") < out.index("---") < out.index("# Test Candidate")
-    assert "https://example.com/job" in out
+def test_index_lists_every_entry_with_its_apply_url_and_pdf():
+    out = render_index([_entry(), _entry(company="Fives", title="Junior QA", fit_score=90,
+                                        pdf_filename="Fives_Junior_QA_1.pdf",
+                                        apply_url="https://example.com/j/1")],
+                       window="24h", skipped_count=16)
+    assert "Alignerr" in out and "Fives" in out
+    assert "https://www.linkedin.com/jobs/view/4446167840" in out
+    assert "Fives_Junior_QA_1.pdf" in out
+    assert "88" in out and "90" in out
 
 
-def test_match_kind_shown_in_metadata():
-    out = _out()
-    assert "**Match:** Learnable stretch" in out
-    assert out.index("**Match:**") < out.index("# Test Candidate")
+def test_index_reports_the_window_and_the_skipped_count():
+    out = render_index([_entry()], window="24h", skipped_count=16)
+    assert "24h" in out
+    assert "16" in out
 
 
-def test_all_sections_present_in_original_order():
-    out = _out()
-    positions = [out.index(f"## {name}") for name in
-                 ["About Me", "Work Experience", "Projects", "Education", "Skills", "Languages"]]
-    assert positions == sorted(positions)
+def test_index_surfaces_guard_corrections():
+    out = render_index([_entry(corrections=["removed unverified skills: Kubernetes"])],
+                       window="24h", skipped_count=0)
+    assert "Kubernetes" in out
 
 
-def test_static_sections_are_verbatim():
-    out = _out()
-    assert "### B.Sc. Computer Science" in out
-    assert "English - Fluent" in out
+def test_index_handles_an_empty_run():
+    out = render_index([], window="24h", skipped_count=9)
+    assert "9" in out
+    assert "No résumés" in out or "no résumés" in out
 
 
-def test_tailored_summary_and_skills_are_used():
-    out = _out()
-    assert "Tailored summary here." in out
-    assert "SQL, Python, Git" in out
+def test_index_links_canva_by_permanent_design_id_not_the_rotating_token():
+    """copy-design returns a /d/<token> URL and those rotate; the design id does
+    not. Every copy also inherits the template's title, so a dead link would leave
+    no way to tell the designs apart."""
+    out = render_index([_entry()], window="24h", skipped_count=0)
+    assert "https://www.canva.com/design/DAHR-XiHc_U" in out
+    assert "abc123" not in out
 
 
-def test_experience_anchor_is_verbatim_with_reworded_bullets_in_new_order():
-    out = _out()
-    intern = out.index("### Intern | Beta Ltd")
-    acme = out.index("### Backend Developer | Acme Corp")
-    assert intern < acme  # reordered: entry_index 1 first
-    assert "*Jan 2024 - present*" in out
-    assert "Reworded acme bullet." in out
-
-
-def test_projects_keep_tech_line_and_have_no_bullets():
-    out = _out()
-    assert "### Chat Bot\nPython, WebSockets" in out
-    assert "### Todo App\nPython, Flask" in out
-    # No section separator should leak into a project entry.
-    assert "WebSockets\n---" not in out
-
-
-def test_notes_appear_in_metadata_above_the_rule():
-    out = render_output(FakePosting(), FakeScore(), PARSED, _tailored(),
-                        notes=["removed unverified skills: Kubernetes"])
-    assert "removed unverified skills: Kubernetes" in out
-    assert out.index("removed unverified skills") < out.index("---")
-
-
-def test_no_notes_line_when_notes_empty():
-    out = render_output(FakePosting(), FakeScore(), PARSED, _tailored())
-    assert "Review" not in out and "Auto-corrected" not in out
+def test_index_falls_back_to_the_recorded_url_when_no_design_id():
+    entry = _entry()
+    del entry["canva_design_id"]
+    out = render_index([entry], window="24h", skipped_count=0)
+    assert "https://www.canva.com/d/abc123" in out

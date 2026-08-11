@@ -5,8 +5,8 @@ import json
 import re
 import sys
 from dataclasses import dataclass
-from pathlib import Path
 
+import canva
 import config
 from config import (
     EXPERIENCE_SECTION,
@@ -16,7 +16,6 @@ from config import (
     SUMMARY_SECTION,
 )
 from jobs import normalize_posting
-from render import render_output
 from resume import parse_resume
 from tailoring import (
     TailoredCV,
@@ -67,11 +66,37 @@ def clean_jobs(raw_items):
     return jobs
 
 
-@dataclass
-class _Posting:
-    company: str
-    title: str
-    url: str
+# Full postings, held in process so descriptions never have to fit in a tool result.
+# Written by reduce_run_payload, read by get_job. Same pattern as the Canva hook's
+# retained geometry: the data the agent needs stays here, and it asks for the one
+# piece it is working on.
+_JOBS_BY_ID = {}
+
+
+def _manifest_entry(job):
+    """The only fields that cross into a tool result for every job at once."""
+    return {"id": job["id"], "title": job["title"], "company": job["company"]}
+
+
+def get_job(job_id):
+    """One posting in full, by id — the descriptions the manifest deliberately omits.
+
+    Returns an `error` rather than raising: an unknown id must cost one job, not
+    the run. The description is capped so that no single posting can approach the
+    32KB inline ceiling either.
+    """
+    job = _JOBS_BY_ID.get(str(job_id))
+    if job is None:
+        known = len(_JOBS_BY_ID)
+        return {"error": f"no job with id {job_id!r} in this run ({known} known). "
+                         f"Use an id exactly as it appeared in the manifest."}
+    description = job.get("description") or ""
+    if len(description) > config.MAX_JOB_DESCRIPTION_CHARS:
+        keep = config.MAX_JOB_DESCRIPTION_CHARS
+        print(f"[get_job] {job_id}: description {len(description)} chars, truncated "
+              f"to {keep}", file=sys.stderr)
+        description = description[:keep] + "\n[description truncated]"
+    return {**job, "description": description, "error": ""}
 
 
 @dataclass
@@ -102,40 +127,74 @@ def safe_filename(company, title, job_id=None):
     return f"{c}_{t}.md"
 
 
-def write_tailored_resume(job, score, tailored, out_dir=None):
-    """The enforcement boundary. Gates on relevance, strips invented skills, repairs
-    entry coverage, renders, and writes. Returns what it wrote or why it refused.
-    The agent cannot write a résumé any other way."""
-    out_dir = Path(out_dir) if out_dir else config.OUTPUT_DIR
+def _budget_exceeded(new_text, original_text):
+    return len(new_text) > len(original_text) * config.LENGTH_BUDGET_RATIO
+
+
+def _summary_limit(original_summary):
+    return int(len(original_summary) * config.SUMMARY_LENGTH_BUDGET_RATIO)
+
+
+def summary_char_limit():
+    """The summary budget in characters, for telling the drafter up front.
+
+    Discovering this limit by being rejected costs a tool call per job. Stating it
+    in the instructions costs nothing.
+    """
+    section = parse_resume(config.BASE_CV_PATH.read_text(encoding="utf-8")).get(
+        SUMMARY_SECTION)
+    return _summary_limit(section.body.strip()) if section else 0
+
+
+def _strip_trailing_period(text):
+    """Drop a trailing full stop from both sides of a find/replace pair.
+
+    base_cv.md and the Canva design do not agree on trailing punctuation — the
+    Ness bullet ends with '.' in the design and without one in the markdown. Since
+    find_and_replace_text matches a substring, the design's own trailing character
+    is left in place and completes the replacement, so each entry keeps whatever
+    punctuation style the template already used. Stripping both sides is what makes
+    the find text match in the first place, and stops a bullet that already ends in
+    '.' from rendering as '..'.
+    """
+    return text[:-1] if text.endswith(".") else text
+
+
+def prepare_resume(job, score, tailored):
+    """The deterministic half of the enforcement boundary.
+
+    Gates on relevance, strips invented skills, repairs entry coverage, and checks
+    the length budget, then returns a slot-keyed edit plan AND the ready-to-send
+    Canva `operations` built from it (via canva.build_operations), so the agent
+    never has to map a slot name to an element_id itself. It writes nothing: the
+    PreToolUse hook on perform-editing-operations is what actually holds the line,
+    because the agent makes the Canva calls itself.
+    """
+    def _reject(reason):
+        return {"rejected": True, "reason": reason, "corrections": [], "edits": {},
+                "operations": []}
+
     s = _Score(**{k: score[k] for k in ("is_junior_friendly", "fit_score", "reason", "match_kind")})
-
     if not (s.is_junior_friendly and s.fit_score >= config.FIT_THRESHOLD):
-        return {"written": None, "rejected": True,
-                "reason": f"below threshold or not junior-friendly (fit {s.fit_score})",
-                "corrections": []}
+        return _reject(f"below threshold or not junior-friendly (fit {s.fit_score})")
 
-    skills = tailored["skills"]
+    summary = tailored.get("summary")
+    if not isinstance(summary, str):
+        return _reject(f"summary must be a single paragraph string, got "
+                       f"{type(summary).__name__}")
+
+    skills = tailored.get("skills")
     if isinstance(skills, (list, tuple)):
         skills = list(skills)
     elif isinstance(skills, str):
-        # get_resume's own view returns skills as a comma-separated string; accept
-        # the exact format our own API emits rather than iterating it char-by-char.
-        skills = [s.strip() for s in skills.split(",") if s.strip()]
+        skills = [part.strip() for part in skills.split(",") if part.strip()]
     else:
-        return {"written": None, "rejected": True,
-                "reason": f"skills must be a list or comma-separated string, got "
-                          f"{type(skills).__name__}",
-                "corrections": []}
+        return _reject(f"skills must be a list or comma-separated string, got "
+                       f"{type(skills).__name__}")
 
-    if "summary" not in tailored:
-        return {"written": None, "rejected": True,
-                "reason": "tailored resume is missing required key 'summary'",
-                "corrections": []}
-    summary = tailored["summary"]
-
+    base_cv = config.BASE_CV_PATH.read_text(encoding="utf-8")
+    parsed = parse_resume(base_cv)
     try:
-        base_cv = config.BASE_CV_PATH.read_text(encoding="utf-8")
-        parsed = parse_resume(base_cv)
         tcv = TailoredCV(
             summary=summary,
             skills=skills,
@@ -145,21 +204,55 @@ def write_tailored_resume(job, score, tailored, out_dir=None):
                       for p in tailored["projects"]],
         )
     except KeyError as exc:
-        return {"written": None, "rejected": True,
-                "reason": f"experience/project entry missing required key {exc}",
-                "corrections": []}
+        return _reject(f"experience/project entry missing required key {exc}")
 
     tcv, removed = strip_invented_skills(tcv, base_cv)
     tcv, notes = repair_entry_coverage(tcv, parsed)
     if removed:
         notes = [f"removed unverified skills: {', '.join(removed)}"] + notes
 
-    posting = _Posting(company=job["company"], title=job["title"], url=job["url"])
-    content = render_output(posting, s, parsed, tcv, notes)
-    out_dir.mkdir(parents=True, exist_ok=True)
-    path = out_dir / safe_filename(job["company"], job["title"], job.get("id"))
-    path.write_text(content, encoding="utf-8")
-    return {"written": str(path), "rejected": False, "reason": "", "corrections": notes}
+    # Skills may have been stripped; rebuild the summary regions only if a skill
+    # name was removed from them is NOT attempted — the guards own skills, not prose.
+    edits = {"summary": summary, "skills": "\n".join(tcv.skills)}
+
+    experience_section = parsed.get(EXPERIENCE_SECTION)
+    base_entries = experience_section.entries if experience_section else []
+    for entry in tcv.experience:
+        slot = f"experience.{entry.entry_index}.bullets"
+        if slot not in config.CANVA_ELEMENT_MAP:
+            continue                      # entry exists in base_cv but not in the design
+        base_bullets = base_entries[entry.entry_index].bullets
+        if len(entry.bullets) != len(base_bullets):
+            return _reject(
+                f"slot {slot!r} has {len(entry.bullets)} bullet(s) but base_cv.md has "
+                f"{len(base_bullets)}. Bullets must be reworded one-to-one, never "
+                f"added, dropped, split, or merged.")
+        joined = "\n".join(entry.bullets)
+        original = "\n".join(base_bullets)
+        if _budget_exceeded(joined, original):
+            return _reject(
+                f"slot {slot!r} exceeds the length budget "
+                f"({len(joined)} chars vs {len(original)} original)")
+        # find/replace pairs, not one wholesale string: see canva.build_operations
+        # for why the bullet blocks cannot take a replace_text.
+        edits[slot] = [{"find": _strip_trailing_period(old),
+                        "replace": _strip_trailing_period(new)}
+                       for old, new in zip(base_bullets, entry.bullets)]
+
+    summary_section = parsed.get(SUMMARY_SECTION)
+    if summary_section:
+        original_summary = summary_section.body.strip()
+        if len(summary) > _summary_limit(original_summary):
+            # Numbers, not just a verdict: without them the only way back is to
+            # bisect, which costs a tool call per guess on an unattended run.
+            return _reject(
+                f"slot 'summary' exceeds the length budget: {len(summary)} chars, "
+                f"limit {_summary_limit(original_summary)} (the base summary is "
+                f"{len(original_summary)}). Shorten it and call prepare_resume again.")
+
+    operations = canva.build_operations(edits, config.CANVA_ELEMENT_MAP)
+    return {"rejected": False, "reason": "", "corrections": notes, "edits": edits,
+            "operations": operations}
 
 
 def _window(run):
@@ -251,6 +344,11 @@ def reduce_run_payload(tool_response):
                   f"out (kept=0, dropped_non_israel={dropped_non_israel}) — likely "
                   f"cause: upstream schema change in the 'location' field", file=sys.stderr)
 
+        # Descriptions stay here; only the manifest crosses into the tool result.
+        _JOBS_BY_ID.clear()
+        for job in jobs:
+            _JOBS_BY_ID[str(job["id"])] = job
+
         envelope = {
             "status": "COMPLETED",
             "runId": run.get("runId"),
@@ -259,9 +357,29 @@ def reduce_run_payload(tool_response):
             "kept": kept,
             "dropped_duplicate": dropped_duplicate,
             "dropped_non_israel": dropped_non_israel,
-            "jobs": jobs,
+            "jobs": [_manifest_entry(job) for job in jobs],
+            "note": ("`jobs` lists every kept posting by id/title/company only. "
+                     "Call `get_job` with an id for that posting's description, "
+                     "url and location."),
         }
         text = json.dumps(envelope, ensure_ascii=False)
+
+        # Should be unreachable — the manifest is ~97 bytes a job, so this needs
+        # ~250 postings. If it ever fires, the run degrades visibly (fewer jobs,
+        # counts still honest) instead of being silently cut to a 2KB preview,
+        # which is exactly how the 2026-08-11 run failed.
+        if len(text) > config.SAFE_ENVELOPE_BYTES:
+            room = config.SAFE_ENVELOPE_BYTES - (len(text) - len(json.dumps(
+                envelope["jobs"], ensure_ascii=False)))
+            fits = max(1, room // 120)
+            print(f"[reduce] WARNING: manifest for {kept} jobs is {len(text)} bytes, "
+                  f"over the {config.SAFE_ENVELOPE_BYTES} budget (CLI drops anything "
+                  f"past {config.INLINE_RESULT_LIMIT_BYTES} to a 2KB preview). "
+                  f"Listing the first {fits}; the rest are unreachable this run.",
+                  file=sys.stderr)
+            envelope["jobs"] = envelope["jobs"][:fits]
+            envelope["manifest_truncated_to"] = fits
+            text = json.dumps(envelope, ensure_ascii=False)
     except Exception as exc:                      # noqa: BLE001 - degrade, never crash the run
         print(f"[reduce] reduction failed ({exc!r}); passing raw output through",
               file=sys.stderr)
@@ -270,5 +388,59 @@ def reduce_run_payload(tool_response):
     print(f"[reduce] run={envelope['runId']} window={envelope['window']} "
           f"fetched={fetched} kept={kept} "
           f"dropped_duplicate={dropped_duplicate} "
-          f"dropped_non_israel={dropped_non_israel}", file=sys.stderr)
+          f"dropped_non_israel={dropped_non_israel} "
+          f"envelope={len(text)}B/{config.INLINE_RESULT_LIMIT_BYTES}B "
+          f"descriptions_held={len(_JOBS_BY_ID)}", file=sys.stderr)
     return text
+
+
+def _fetch_bytes(url):
+    """Isolated so tests can substitute it without touching the network."""
+    import urllib.request
+    with urllib.request.urlopen(url, timeout=120) as response:
+        return response.read()
+
+
+def run_dir(today=None):
+    """output/<YYYY-MM-DD>/ for this run, created on demand."""
+    from datetime import date
+    stamp = today or date.today().isoformat()
+    path = config.OUTPUT_DIR / stamp
+    path.mkdir(parents=True, exist_ok=True)
+    return path
+
+
+def save_pdf(export_url, company, title, job_id, today=None):
+    """Download an exported Canva PDF into this run's output directory.
+
+    The agent has no Bash/Read/Write/WebFetch - those are denied so a failure
+    cannot degrade into hand-parsing - so downloading has to happen here.
+    Returns rather than raises: one job's failed download must not end the run.
+    """
+    from render import pdf_filename
+    filename = pdf_filename(company, title, job_id)
+    try:
+        payload = _fetch_bytes(export_url)
+    except Exception as exc:                     # noqa: BLE001 - report, never abort the run
+        print(f"[save_pdf] {filename}: download failed ({exc})", file=sys.stderr)
+        return {"saved": None, "error": str(exc), "filename": filename}
+
+    if not payload:
+        message = "download was empty; nothing written"
+        print(f"[save_pdf] {filename}: {message}", file=sys.stderr)
+        return {"saved": None, "error": message, "filename": filename}
+
+    path = run_dir(today) / filename
+    path.write_bytes(payload)
+    print(f"[save_pdf] wrote {path} ({len(payload):,} bytes)", file=sys.stderr)
+    return {"saved": str(path), "error": "", "filename": filename}
+
+
+def write_index(entries, window, skipped_count, today=None):
+    """Write this run's index.md - the operator view that cannot live inside a CV."""
+    from render import render_index
+    path = run_dir(today) / "index.md"
+    path.write_text(render_index(entries, window, skipped_count), encoding="utf-8")
+    print(f"[write_index] wrote {path} ({len(entries)} entries, "
+          f"{skipped_count} skipped)", file=sys.stderr)
+    return {"written": str(path)}

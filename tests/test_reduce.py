@@ -1,6 +1,8 @@
 import json
 from pathlib import Path
 
+import config
+import tooling
 from tooling import reduce_run_payload
 
 FIXTURE = Path(__file__).parent / "fixtures" / "harvestapi_response.json"
@@ -46,26 +48,30 @@ def test_envelope_carries_status_and_run_id_for_polling_agent():
     payload = _run(output=[_raw("1", "Tel Aviv, Israel")], run_id="01XYZ")
     env = json.loads(reduce_run_payload(payload))
     assert set(env) == {"status", "runId", "window", "fetched", "kept",
-                         "dropped_duplicate", "dropped_non_israel", "jobs"}
+                         "dropped_duplicate", "dropped_non_israel", "jobs", "note"}
     assert env["status"] == "COMPLETED"
     assert env["runId"] == "01XYZ"
 
 
-def test_kept_jobs_carry_only_the_seven_needed_fields():
+def test_manifest_carries_only_id_title_company():
+    """Descriptions are the bulk, and all of them together blew the 32KB inline
+    ceiling on 2026-08-11. The manifest is what the agent can be handed at once;
+    everything else comes from get_job."""
     env = json.loads(reduce_run_payload(_run(output=[_raw("1", "Tel Aviv, Israel")])))
-    assert set(env["jobs"][0]) == {"id", "title", "company", "description",
-                                   "url", "posted_date", "location"}
+    assert set(env["jobs"][0]) == {"id", "title", "company"}
 
 
 def test_posted_date_survives_reduction():
-    env = json.loads(reduce_run_payload(_run(output=[_raw("1", "Tel Aviv, Israel")])))
-    assert env["jobs"][0]["posted_date"] == "2026-07-27T01:47:21.000Z"
+    reduce_run_payload(_run(output=[_raw("1", "Tel Aviv, Israel")]))
+    assert tooling.get_job("1")["posted_date"] == "2026-07-27T01:47:21.000Z"
 
 
 def test_descriptions_are_kept_in_full():
+    """Held in process rather than serialised — but never trimmed."""
     long_desc = "Requirements: " + ("Python and SQL. " * 500)
-    env = json.loads(reduce_run_payload(_run(output=[_raw("1", "Israel", description=long_desc)])))
-    assert env["jobs"][0]["description"] == long_desc
+    reduced = reduce_run_payload(_run(output=[_raw("1", "Israel", description=long_desc)]))
+    assert long_desc not in reduced           # not in the envelope...
+    assert tooling.get_job("1")["description"] == long_desc   # ...but intact here
 
 
 def test_window_missing_is_null_not_fatal():
@@ -160,10 +166,13 @@ def test_real_scrape_shrinks_hard_and_preserves_descriptions():
     assert env["dropped_non_israel"] == 35
     # the whole point: a large majority of the payload is gone
     assert len(reduced) < len(payload) * 0.25
+    # every kept job is listed, and the envelope now fits inline with room to spare
+    assert len(env["jobs"]) == env["kept"] == 47
+    assert len(reduced) < config.SAFE_ENVELOPE_BYTES
     # ...and none of it came out of the descriptions
     by_id = {str(i["id"]): i.get("descriptionText", "") for i in items}
     for job in env["jobs"]:
-        assert job["description"] == by_id[job["id"]]
+        assert tooling.get_job(job["id"])["description"] == by_id[job["id"]]
 
 
 def test_is_run_in_progress_detects_polling_states():

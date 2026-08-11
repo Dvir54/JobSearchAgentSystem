@@ -1,12 +1,15 @@
 """Entry point: run one autonomous job-search + tailoring session.
 
 The agent owns judgment and orchestration (job search, fit scoring, CV
-tailoring). The deterministic core splits across two enforcement points: the
-Israel filter/dedup happens in the PostToolUse hook before the agent ever
-sees a job (see hooks.py / tooling.reduce_run_payload), and the truthfulness
-guards plus the actual file write happen inside the `write_resume` tool (see
-tools.py / tooling.py). The agent cannot produce an unchecked or untruthful
-résumé, nor see an unfiltered job list; it can only ask the gate to try.
+tailoring). The deterministic core splits across three enforcement points:
+the Israel filter/dedup happens in the PostToolUse hook before the agent
+ever sees a job (see hooks.py / tooling.reduce_run_payload); `prepare_resume`
+(tools.py / tooling.py) computes a guard-checked Canva edit plan but writes
+nothing itself; and because the agent makes the Canva calls itself, and
+could send something other than what `prepare_resume` returned, the
+PreToolUse hook on `perform-editing-operations` (hooks.guard_canva_write) is
+what actually inspects and denies an untruthful write. Both halves are
+required for the guarantee to hold.
 """
 import asyncio
 import os
@@ -16,6 +19,7 @@ from dotenv import load_dotenv
 
 import config
 import hooks
+import tooling
 from tools import resume_tools
 
 # Loaded at import time (not just inside main()) so that MONID_API_KEY is already
@@ -82,7 +86,7 @@ Give a one-sentence reason citing the specific requirement or gap that drove you
 and — for a stretch — what makes the gap learnable for a junior."""
 
 # --- CV-editor rules, relocated verbatim from tailoring.py's SYSTEM_PROMPT ---
-CV_EDITOR_RULES = """You are a CV editor. You adapt one candidate's existing CV to one
+CV_EDITOR_RULES = f"""You are a CV editor. You adapt one candidate's existing CV to one
 specific job posting. You are given the candidate's summary, skills, and their
 Work Experience and Project entries, each entry labelled with an index like [0], [1].
 
@@ -95,18 +99,19 @@ Work through this before writing anything:
 
 Produce:
 - summary: 2-3 sentences positioning the candidate for this specific role, built only
-  from evidence in the CV.
+  from evidence in the CV. It must be at most {tooling.summary_char_limit()} characters
+  — the box it goes in does not grow. Count before you submit; going over is a
+  rejection and costs a round trip.
 - skills: the candidate's skills, ordered so the ones this posting names come first.
   Include only skills already in the CV.
-- experience: every Work Experience entry, referenced by its index, reordered so the
-  most relevant entry comes first. For each entry, reword the bullets it already has to
-  surface the skills this posting cares about. Return exactly the same number of bullets
-  the entry already has, in the same one-to-one correspondence — reword each, but never
-  add a new bullet, never split one bullet into two, never merge two into one. Reference
-  every index exactly once — never drop, add, or duplicate an entry.
-- projects: every Project entry, referenced by its index, reordered so the most
-  relevant comes first. Projects have no bullets to rewrite; return an empty bullet
-  list for each. Reference every index exactly once.
+- experience: every Work Experience entry, referenced by its index. For each entry,
+  reword the bullets it already has to surface the skills this posting cares about.
+  Return exactly the same number of bullets the entry already has, in the same
+  one-to-one correspondence — reword each, but never add a new bullet, never split one
+  bullet into two, never merge two into one. Reference every index exactly once — never
+  drop, add, or duplicate an entry.
+- projects: every Project entry, referenced by its index. Projects have no bullets to
+  rewrite; return an empty bullet list for each. Reference every index exactly once.
 
 Hard constraints on truth:
 - Every claim must be one the candidate could defend in an interview.
@@ -152,34 +157,105 @@ Follow this workflow exactly:
    `status` and `runId` (confirming which run this is), `window` (the posting-age window
    this search used), `fetched`, `kept`, `dropped_duplicate`, `dropped_non_israel`, and
    `jobs`. Receiving this object means the run has already reached COMPLETED — stop
-   polling as soon as you see it. Work through `jobs`. Do not try to re-filter or
-   re-dedupe it, and do not look for a `filter_jobs` tool — there is none. If instead you
-   ever receive a raw run object that has an `output` list but no `jobs` field, the
-   reduction step did not run for that result: in that case, and only that case, work
-   through `output` yourself — dedupe by `id` (first occurrence wins) and keep only
-   postings whose location mentions Israel — since nothing upstream has done it for you.
+   polling as soon as you see it. Do not try to re-filter or re-dedupe it, and do not
+   look for a `filter_jobs` tool — there is none.
+
+   `jobs` is a MANIFEST: one entry per kept posting carrying `id`, `title` and
+   `company` ONLY. The descriptions are deliberately not in it — all of them together
+   are far too large to be handed over at once, and a previous run died exactly that
+   way. `get_job` is how you read a posting: it returns that job's description, url
+   and location in full. Every job in `jobs` is reachable, so `kept` is the true size
+   of this search — judge all of them.
+
+   If you ever receive a raw run object that has an `output` list but no `jobs` field,
+   the reduction step did not run for that result: in that case, and only that case,
+   work through `output` yourself — dedupe by `id` (first occurrence wins) and keep
+   only postings whose location mentions Israel — since nothing upstream has done it
+   for you.
+
+3b. Create this run's Canva folder with `create-folder`, named
+    "{config.CANVA_FOLDER_PREFIX} — <today's date, YYYY-MM-DD>", with
+    `parent_folder_id: 'root'` (it is required). Keep the new folder's id.
 
 4. For EACH job in `jobs`:
-   a. Judge fit yourself using the rubric below (you replace `scoring.py`'s job): decide
-      `is_junior_friendly`, `fit_score` (0-100), `match_kind` ("direct" or "stretch"), and a
-      one-sentence `reason`.
-   b. Only if the job is junior-friendly AND `fit_score >= {config.FIT_THRESHOLD}` (the
-      pinned `config.FIT_THRESHOLD`), draft the tailored CV fields yourself using the
-      CV-editor rules below (you replace `tailoring.py`'s job): `summary`, `skills`,
-      `experience` (every Work Experience entry, referenced by its original index exactly
-      once, with reworded bullets), and `projects` (every Project entry, referenced by its
-      original index exactly once, with an empty bullet list). Then call `write_resume`
-      with the job, your score, and your tailored fields.
-   c. For jobs that are not junior-friendly or score below the threshold, do NOT call
-      `write_resume` for them — just note them as skipped. `write_resume` itself also
-      refuses below-threshold jobs as a backstop, but do not rely on that backstop: only
-      call it for jobs you have already judged to clear the bar.
+   a. Call `get_job` with that job's `id` to read the posting — you need its
+      requirements text to judge it, and the manifest does not carry it. Keep the
+      `url` it returns; you will need it later and it is not in the manifest either.
+      Then judge fit yourself using the rubric below: `is_junior_friendly`,
+      `fit_score` (0-100), `match_kind` ("direct" or "stretch"), and a one-sentence
+      `reason`. If `get_job` returns an `error`, record the job as skipped with that
+      reason and move on.
+   b. If the job is NOT junior-friendly or `fit_score` < {config.FIT_THRESHOLD},
+      skip it — no Canva copy, no PDF. Just note it as skipped.
+   c. Otherwise draft the tailored fields using the CV-editor rules below, then call
+      `prepare_resume` with `job` as an object with ONLY `id`, `title`, `company`, and
+      `url` (never the posting's description text — `prepare_resume` doesn't use it),
+      your score, and those fields. On success it returns both `edits` (for your own
+      records) and `operations` — the exact Canva operations to send.
+      If it returns `rejected: true`, read the reason before deciding:
+      - A reason about the FIT (below threshold, not junior-friendly) means this job
+        does not earn a CV. Note it and move on — do NOT touch Canva.
+      - A reason about your DRAFT (a length budget with its numbers, a bullet count,
+        a missing key, a wrong type) is a fixable drafting error, not a verdict on
+        the job. Fix exactly what the message names and call `prepare_resume` again.
+        Try at most twice more, then skip the job and record why.
+   d. Call `copy-design` with design_id {config.CANVA_TEMPLATE_DESIGN_ID!r}. Keep the
+      new design's id and its edit URL.
+   e. Call `start-editing-transaction` on that new design. Keep the transaction id
+      AND the `pages` array it returns.
+   f. Call `perform-editing-operations` passing the `operations` array `prepare_resume`
+      returned VERBATIM — together with the transaction id, `page_index: 1`, and the
+      `pages` array from step (e) exactly as it came back. Do NOT construct, reorder,
+      or edit the operations yourself; send exactly what was returned.
+      The array mixes `replace_text` and `find_and_replace_text` operations, and
+      there may be several against the same element — that is deliberate and
+      measured against the real design. Send them all, in order, unchanged.
+   g. The response is `{{"ok": bool, "overflow": {{element_id: px}},
+      "failed_operations": [...], "not_applied": [...]}}`. The overflow check is done
+      for you in code — do NOT try to compare element heights yourself.
+      - If the response has NO `ok` field at all, the overflow check did not run (the
+        payload could not be read) — call `cancel-editing-transaction`, record the job
+        as skipped, and move on. Do NOT commit.
+      - If `ok` is true, continue to (h).
+      - If `ok` is false there are two distinct cases, and they call for different
+        responses:
+        - `overflow` is non-empty: call `cancel-editing-transaction`. Shorten the
+          named blocks yourself by roughly the reported pixel overrun, then call
+          `prepare_resume` again with the job, your score, and the shortened tailored
+          fields — this re-applies every guard (relevance, invented skills, entry
+          coverage, length budget) to the redraft, exactly as the first attempt. Take
+          the `operations` it returns and resume at step (e) using the SAME copied
+          design from step (d) — do not call `copy-design` again. Retry at most
+          {config.MAX_REDRAFT_ATTEMPTS} times total. After that, skip the job and
+          record it.
+        - `failed_operations` is non-empty: the edit itself was rejected for a reason
+          unrelated to overflow. There is no block to shorten and no point retrying the
+          same operations — call `cancel-editing-transaction`, record the failure, and
+          move on to the next job.
+        - `not_applied` is non-empty: the API reported success but the text is not
+          actually in the element, so committing would publish the UNTAILORED
+          template text as though it were tailored. Call
+          `cancel-editing-transaction`, record the failure, and move on. Do not
+          retry and do not commit.
+      NEVER commit a design whose response was not `ok`.
+   h. Call `commit-editing-transaction`.
+   i. Call `get-export-formats` for this design first — `export-design` requires it and
+      will not accept a guessed format. Then call `export-design` for PDF and poll until
+      it completes.
+   j. Call `save_pdf` with the export URL, the company, the title and the job id.
+      You have no other way to write a file.
+   k. Call `move-item-to-folder` to file the design in this run's folder.
 
-5. When every job has been judged, report a final summary: the `window` the search covered,
-   how many jobs were fetched vs kept (`fetched`, `kept`, `dropped_duplicate`,
-   `dropped_non_israel`), how many résumés were written (and to which companies/titles),
-   how many were skipped and why, and any corrections `write_resume` reported (e.g.
-   stripped skills, repaired entry coverage).
+   If `perform-editing-operations` is denied by the guard, call
+   `cancel-editing-transaction` and skip the job — do not retry the same text.
+
+5. Once every job has been judged, call `write_index` **once**, with one entry per
+   résumé written — `company`, `title`, `fit_score`, `match_kind`, `reason`, `apply_url`,
+   `pdf_filename`, `canva_design_id` (the id from step (d) — this is what the index
+   links to, so do not omit it), `canva_edit_url`, `corrections` — plus the search
+   `window` and the
+   count of jobs judged but skipped. `write_index` is the only way to create that file.
+   Then report the same summary in your final message.
 
 --- Fit-scoring rubric (judgment point one — replaces scoring.py) ---
 {SCORING_RUBRIC}
@@ -195,9 +271,11 @@ def build_options() -> "ClaudeAgentOptions":
     """Configure the one-shot autonomous session.
 
     - Monid MCP over remote HTTP with the bearer key (per docs/agent-sdk-reference.md
-      section 4), plus the in-process `resume_tools` server (section 3).
+      section 4), plus the in-process `resume_tools` server (section 3) and the
+      remote Canva MCP the agent uses to build the tailored PDF.
     - `allowed_tools` lists exactly the Monid tools the workflow needs (run/get_run,
-      plus balance as a cheap sanity check) and the two resume tools.
+      plus balance as a cheap sanity check), the four resume tools, and the Canva
+      tools the copy/edit/export sequence in the workflow calls.
     - `permission_mode="dontAsk"`: auto-runs anything already in `allowed_tools` without
       an interactive prompt — the safer non-prompting mode called out in the reference
       doc, since this session runs headlessly with no human available to answer a
@@ -223,13 +301,26 @@ def build_options() -> "ClaudeAgentOptions":
                 "headers": {"Authorization": f"Bearer {os.environ['MONID_API_KEY']}"},
             },
             "resume_tools": resume_tools,
+            "canva": {"type": "http", "url": "https://mcp.canva.com/mcp"},
         },
         allowed_tools=[
             "mcp__monid__monid_run",
             "mcp__monid__monid_get_run",
             "mcp__monid__monid_balance",
             "mcp__resume_tools__get_resume",
-            "mcp__resume_tools__write_resume",
+            "mcp__resume_tools__get_job",
+            "mcp__resume_tools__prepare_resume",
+            "mcp__resume_tools__save_pdf",
+            "mcp__resume_tools__write_index",
+            "mcp__canva__copy-design",
+            "mcp__canva__start-editing-transaction",
+            "mcp__canva__perform-editing-operations",
+            "mcp__canva__commit-editing-transaction",
+            "mcp__canva__cancel-editing-transaction",
+            "mcp__canva__export-design",
+            "mcp__canva__get-export-formats",
+            "mcp__canva__create-folder",
+            "mcp__canva__move-item-to-folder",
         ],
         # allowed_tools only PRE-APPROVES; it does not restrict. Without this the
         # agent keeps every built-in tool and can route around a failed reduction by
@@ -237,10 +328,22 @@ def build_options() -> "ClaudeAgentOptions":
         disallowed_tools=[
             "Bash", "Grep", "Glob", "Read", "Write", "Edit", "NotebookEdit",
             "Agent", "Task", "PowerShell", "WebFetch", "WebSearch",
+            # Added after the 2026-08-11 run: blocked from reading an oversized
+            # tool result off disk, the agent probed every one of these looking for
+            # a way in. Monitor runs shell commands and was stopped only by
+            # permission mode — the safety net, not this list. Deny them outright.
+            "Monitor", "TaskCreate", "TaskOutput", "TaskList", "TaskUpdate",
+            "TaskStop", "TaskGet", "Workflow", "SendMessage", "EnterWorktree",
         ],
         env={"MAX_MCP_OUTPUT_TOKENS": config.MAX_MCP_OUTPUT_TOKENS},
         permission_mode="dontAsk",
-        max_turns=200,
+        # Sized against the worst realistic run, not the happy path: the per-job
+        # Canva sequence (a-k) is ~12 turns, and each overflow redraft adds ~4 more,
+        # twice per job. Ten qualifying jobs that mostly overflow lands near 210 —
+        # and hitting the cap would cut the run off before `write_index`, losing the
+        # index and the summary while leaving the PDFs orphaned on disk. The
+        # `disallowed_tools` cage is what bounds a runaway; this is just headroom.
+        max_turns=300,
         # The Monid harvestapi result for a 'week' window (100+ jobs with full
         # text+HTML descriptions) can exceed the SDK's 1MB default message buffer;
         # raise it so the completed monid_get_run result fits through the pipe.
@@ -251,6 +354,24 @@ def build_options() -> "ClaudeAgentOptions":
             "PostToolUse": [
                 HookMatcher(matcher="mcp__monid__monid_get_run",
                             hooks=[hooks.reduce_monid_output]),
+                # start-editing-transaction and perform-editing-operations each
+                # return the WHOLE design (~13-16KB); the reducer keeps the geometry
+                # in-process and returns an overflow verdict. commit/cancel are NOT
+                # reduced — their (small) responses pass through untouched; these two
+                # matchers exist only so the hook can release the retained geometry
+                # for that transaction_id.
+                HookMatcher(matcher="mcp__canva__start-editing-transaction",
+                            hooks=[hooks.reduce_canva_output]),
+                HookMatcher(matcher="mcp__canva__perform-editing-operations",
+                            hooks=[hooks.reduce_canva_output]),
+                HookMatcher(matcher="mcp__canva__commit-editing-transaction",
+                            hooks=[hooks.reduce_canva_output]),
+                HookMatcher(matcher="mcp__canva__cancel-editing-transaction",
+                            hooks=[hooks.reduce_canva_output]),
+            ],
+            "PreToolUse": [
+                HookMatcher(matcher="mcp__canva__perform-editing-operations",
+                            hooks=[hooks.guard_canva_write]),
             ],
         },
     )
