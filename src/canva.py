@@ -74,17 +74,69 @@ def validate_map(elements, element_map, validate_only_ids):
 
 
 def build_operations(edits, element_map):
-    """Turn a slot→text edit plan into Canva editing operations.
+    """Turn a slot→edit plan into Canva editing operations.
 
-    Every slot is overwritten wholesale with replace_text. That flattens inline
-    formatting inside the element — accepted, because only the About Me paragraph
-    has any, and block-level formatting (bullets, font, colour) is preserved.
+    Two operation types, because measurement against the real design showed
+    replace_text is only safe for some elements:
+
+    - A slot whose value is a string becomes one `replace_text`. That collapses
+      the element to a single region which inherits the FIRST original region's
+      formatting. For `summary` and `skills` the first region is the real content,
+      so bullets/font/colour survive; only the summary's inline bold is lost,
+      which we accept.
+    - A slot whose value is a list of {"find", "replace"} pairs becomes one
+      `find_and_replace_text` per pair. The experience bullet blocks need this:
+      their first region is an empty "\\n" spacer paragraph carrying no list
+      formatting, so a wholesale replace_text inherits "not a list" and silently
+      strips every bullet marker — measured on the live design, not assumed.
+      find_and_replace_text rewrites the characters inside each paragraph and
+      leaves the paragraph structure (markers, indent, spacer lines) untouched.
     """
     operations = []
-    for slot, text in edits.items():
+    for slot, value in edits.items():
         eid = element_map[slot]             # KeyError on an unknown slot is correct
-        operations.append({"type": "replace_text", "element_id": eid, "text": text})
+        if isinstance(value, str):
+            operations.append({"type": "replace_text", "element_id": eid, "text": value})
+            continue
+        for pair in value:
+            operations.append({"type": "find_and_replace_text", "element_id": eid,
+                               "find_text": pair["find"],
+                               "replace_text": pair["replace"]})
     return operations
+
+
+def _element_text(element):
+    return "".join(element.get("regions") or [])
+
+
+def find_unapplied(operations, elements_after):
+    """Operations whose text is NOT present in the element afterwards.
+
+    `edit_operation_results` cannot be trusted on its own: a
+    `find_and_replace_text` whose `find_text` matches nothing changes nothing and
+    still reports `status: "success"` — measured against the live API. Left
+    unchecked that publishes the untailored template bullet as if it were the
+    tailored one, which is the worst failure available here (a plausible-looking
+    wrong PDF). So we verify against the post-edit text the API itself returns.
+
+    Reports element ids and operation types only; the text stays out, both to keep
+    the payload small and because the model does not need it to act.
+    """
+    unapplied = []
+    for operation in operations:
+        element = elements_after.get(operation.get("element_id"))
+        if element is None:
+            continue
+        if operation.get("type") == "replace_text":
+            wanted = operation.get("text") or ""
+        elif operation.get("type") == "find_and_replace_text":
+            wanted = operation.get("replace_text") or ""
+        else:
+            continue                       # not a text write: nothing to verify
+        if wanted and wanted not in _element_text(element):
+            unapplied.append({"element_id": operation["element_id"],
+                              "type": operation["type"]})
+    return unapplied
 
 
 def find_overflows(elements_after, capacity, only_ids):

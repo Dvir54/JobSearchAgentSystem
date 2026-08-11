@@ -42,8 +42,54 @@ _PREPARE_RESUME_SCHEMA = {
             },
             "required": ["id", "title", "company", "url"],
         },
-        "score": {"type": "object"},
-        "tailored": {"type": "object"},
+        "score": {
+            "type": "object",
+            "properties": {
+                "is_junior_friendly": {"type": "boolean"},
+                "fit_score": {"type": "integer"},
+                "match_kind": {"type": "string", "enum": ["direct", "stretch"]},
+                "reason": {"type": "string"},
+            },
+            "required": ["is_junior_friendly", "fit_score", "match_kind", "reason"],
+        },
+        # Spelled out rather than left as a bare object: the first smoke run wasted
+        # a call guessing `index` for what is actually `entry_index`.
+        "tailored": {
+            "type": "object",
+            "properties": {
+                "summary": {"type": "string",
+                            "description": "One paragraph. Not a list of strings."},
+                "skills": {"type": "array", "items": {"type": "string"}},
+                "experience": {
+                    "type": "array",
+                    "items": {
+                        "type": "object",
+                        "properties": {
+                            "entry_index": {"type": "integer"},
+                            "bullets": {
+                                "type": "array", "items": {"type": "string"},
+                                "description": "Exactly as many bullets as the entry "
+                                               "already has, reworded one-to-one.",
+                            },
+                        },
+                        "required": ["entry_index", "bullets"],
+                    },
+                },
+                "projects": {
+                    "type": "array",
+                    "items": {
+                        "type": "object",
+                        "properties": {
+                            "entry_index": {"type": "integer"},
+                            "bullets": {"type": "array", "items": {"type": "string"},
+                                        "description": "Always empty for projects."},
+                        },
+                        "required": ["entry_index", "bullets"],
+                    },
+                },
+            },
+            "required": ["summary", "skills", "experience", "projects"],
+        },
     },
     "required": ["job", "score", "tailored"],
 }

@@ -1,5 +1,6 @@
 import pytest
 
+import canva
 from canva import compute_capacity, parse_elements, validate_map
 
 # Trimmed from a real start-editing-transaction response (design DAHQxzJVWM4).
@@ -195,3 +196,40 @@ def test_find_overflows_tolerates_infinite_capacity():
     after = {k: dict(v) for k, v in els.items()}
     after[lowest]["height"] = 9999
     assert find_overflows(after, caps, [lowest]) == {}
+
+
+def test_build_operations_mixes_wholesale_and_per_bullet_writes():
+    """A string slot goes wholesale; a list of pairs becomes one
+    find_and_replace_text per bullet, because a bullet block's first region is an
+    empty spacer paragraph and a wholesale replace_text inherits its lack of list
+    formatting, stripping every marker."""
+    ops = canva.build_operations(
+        {"skills": "Python\nSQL",
+         "experience.0.bullets": [{"find": "old one", "replace": "new one"},
+                                  {"find": "old two", "replace": "new two"}]},
+        {"skills": "E-skills", "experience.0.bullets": "E-bullets"})
+    assert ops == [
+        {"type": "replace_text", "element_id": "E-skills", "text": "Python\nSQL"},
+        {"type": "find_and_replace_text", "element_id": "E-bullets",
+         "find_text": "old one", "replace_text": "new one"},
+        {"type": "find_and_replace_text", "element_id": "E-bullets",
+         "find_text": "old two", "replace_text": "new two"},
+    ]
+
+
+def test_find_unapplied_flags_text_that_is_not_in_the_element_afterwards():
+    after = {"E1": {"regions": ["Java\nPython"]}}
+    applied = [{"type": "replace_text", "element_id": "E1", "text": "Java\nPython"}]
+    missed = [{"type": "find_and_replace_text", "element_id": "E1",
+               "find_text": "nope", "replace_text": "Rust"}]
+    assert canva.find_unapplied(applied, after) == []
+    assert canva.find_unapplied(missed, after) == [{"element_id": "E1",
+                                                    "type": "find_and_replace_text"}]
+
+
+def test_find_unapplied_ignores_elements_and_operations_it_cannot_judge():
+    after = {"E1": {"regions": ["Java"]}}
+    assert canva.find_unapplied([{"type": "replace_text", "element_id": "GONE",
+                                  "text": "x"}], after) == []
+    assert canva.find_unapplied([{"type": "format_text", "element_id": "E1",
+                                  "formatting": {}}], after) == []

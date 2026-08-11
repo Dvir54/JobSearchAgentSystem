@@ -98,6 +98,35 @@ def _budget_exceeded(new_text, original_text):
     return len(new_text) > len(original_text) * config.LENGTH_BUDGET_RATIO
 
 
+def _summary_limit(original_summary):
+    return int(len(original_summary) * config.SUMMARY_LENGTH_BUDGET_RATIO)
+
+
+def summary_char_limit():
+    """The summary budget in characters, for telling the drafter up front.
+
+    Discovering this limit by being rejected costs a tool call per job. Stating it
+    in the instructions costs nothing.
+    """
+    section = parse_resume(config.BASE_CV_PATH.read_text(encoding="utf-8")).get(
+        SUMMARY_SECTION)
+    return _summary_limit(section.body.strip()) if section else 0
+
+
+def _strip_trailing_period(text):
+    """Drop a trailing full stop from both sides of a find/replace pair.
+
+    base_cv.md and the Canva design do not agree on trailing punctuation — the
+    Ness bullet ends with '.' in the design and without one in the markdown. Since
+    find_and_replace_text matches a substring, the design's own trailing character
+    is left in place and completes the replacement, so each entry keeps whatever
+    punctuation style the template already used. Stripping both sides is what makes
+    the find text match in the first place, and stops a bullet that already ends in
+    '.' from rendering as '..'.
+    """
+    return text[:-1] if text.endswith(".") else text
+
+
 def prepare_resume(job, score, tailored):
     """The deterministic half of the enforcement boundary.
 
@@ -159,16 +188,34 @@ def prepare_resume(job, score, tailored):
         slot = f"experience.{entry.entry_index}.bullets"
         if slot not in config.CANVA_ELEMENT_MAP:
             continue                      # entry exists in base_cv but not in the design
-        edits[slot] = "\n".join(entry.bullets)
-        original = "\n".join(base_entries[entry.entry_index].bullets)
-        if _budget_exceeded(edits[slot], original):
+        base_bullets = base_entries[entry.entry_index].bullets
+        if len(entry.bullets) != len(base_bullets):
+            return _reject(
+                f"slot {slot!r} has {len(entry.bullets)} bullet(s) but base_cv.md has "
+                f"{len(base_bullets)}. Bullets must be reworded one-to-one, never "
+                f"added, dropped, split, or merged.")
+        joined = "\n".join(entry.bullets)
+        original = "\n".join(base_bullets)
+        if _budget_exceeded(joined, original):
             return _reject(
                 f"slot {slot!r} exceeds the length budget "
-                f"({len(edits[slot])} chars vs {len(original)} original)")
+                f"({len(joined)} chars vs {len(original)} original)")
+        # find/replace pairs, not one wholesale string: see canva.build_operations
+        # for why the bullet blocks cannot take a replace_text.
+        edits[slot] = [{"find": _strip_trailing_period(old),
+                        "replace": _strip_trailing_period(new)}
+                       for old, new in zip(base_bullets, entry.bullets)]
 
     summary_section = parsed.get(SUMMARY_SECTION)
-    if summary_section and _budget_exceeded(summary, summary_section.body.strip()):
-        return _reject("slot 'summary' exceeds the length budget")
+    if summary_section:
+        original_summary = summary_section.body.strip()
+        if len(summary) > _summary_limit(original_summary):
+            # Numbers, not just a verdict: without them the only way back is to
+            # bisect, which costs a tool call per guess on an unattended run.
+            return _reject(
+                f"slot 'summary' exceeds the length budget: {len(summary)} chars, "
+                f"limit {_summary_limit(original_summary)} (the base summary is "
+                f"{len(original_summary)}). Shorten it and call prepare_resume again.")
 
     operations = canva.build_operations(edits, config.CANVA_ELEMENT_MAP)
     return {"rejected": False, "reason": "", "corrections": notes, "edits": edits,

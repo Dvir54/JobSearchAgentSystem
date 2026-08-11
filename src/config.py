@@ -79,3 +79,12 @@ MAX_REDRAFT_ATTEMPTS = 2       # overflow redrafts per job before skipping it
 # comparison — skills reordering is length-preserving, so a sub-1.0 ratio would
 # reject every run.
 LENGTH_BUDGET_RATIO = 1.05
+# The summary gets its own, looser budget, derived from the design rather than
+# copied from the bullets. Measured on the template: the About Me box sits at
+# top 119.31 with the Work Experience header at 229.65, so it has 110.3px of room
+# for its current 69.3px — about 4.7 lines against the 3 it uses. Sharing the
+# bullets' 1.05 gave a 275-char limit against a 262-char base, i.e. 13 characters
+# of headroom to reposition the candidate for a specific role; the first smoke run
+# breached it on a perfectly reasonable draft. 1.3 is ~4 lines, still inside the
+# box, and the post-edit height check remains the authority.
+SUMMARY_LENGTH_BUDGET_RATIO = 1.3

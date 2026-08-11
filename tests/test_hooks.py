@@ -129,6 +129,7 @@ def _call_guard(operations):
 
 
 SKILLS_ID = config.CANVA_ELEMENT_MAP["skills"]
+BULLETS_0_EL = config.CANVA_ELEMENT_MAP["experience.0.bullets"]
 
 
 def test_guard_allows_skills_present_in_the_base_cv():
@@ -244,7 +245,8 @@ def _start_payload(summary_height=69.33332, skills_height=208.959984,
             _rt_el(SKILLS_EL, 403.86, 4.65, 178.20, skills_height, ["Java"]),
             _rt_el(f"{PAGE}-vol", 621.98, 42.47, 178.98, 26.46, [" Volunteering"]),
         ],
-        "pages": [{"page_id": PAGE, "page_number": 1, "is_responsive": False}],
+        "pages": [{"page_id": PAGE, "page_number": 1, "is_responsive": False,
+                   "is_editable": True, "is_empty": False, "thumbnail": {"url": "..."}}],
     }
     # Only a real perform-editing-operations response carries this key. Tests that
     # exercise the "everything fits" / overflow paths pass it explicitly; tests
@@ -267,13 +269,34 @@ def test_start_transaction_is_reduced_to_ids_only():
     assert len(text) < 400
 
 
+def test_start_transaction_forwards_the_pages_array_perform_needs():
+    """`perform-editing-operations` documents `pages` as coming from this response;
+    reducing it away would leave the agent unable to supply it at all."""
+    out = _reduce("mcp__canva__start-editing-transaction", _start_payload())
+    payload = json.loads(out["hookSpecificOutput"]["updatedToolOutput"][0]["text"])
+    assert payload["pages"] == [{"page_id": PAGE, "is_responsive": False,
+                                 "is_editable": True, "is_empty": False}]
+    # only the fields the write tool's schema declares — no thumbnails, no bulk
+    assert "thumbnail" not in out["hookSpecificOutput"]["updatedToolOutput"][0]["text"]
+
+
+def test_start_transaction_survives_a_payload_with_no_pages():
+    payload_without_pages = json.loads(_start_payload())
+    del payload_without_pages["pages"]
+    out = _reduce("mcp__canva__start-editing-transaction",
+                  json.dumps(payload_without_pages))
+    payload = json.loads(out["hookSpecificOutput"]["updatedToolOutput"][0]["text"])
+    assert payload["pages"] == []
+    assert payload["page_id"] is None
+
+
 def test_perform_operations_reports_ok_when_everything_fits():
     _reduce("mcp__canva__start-editing-transaction", _start_payload())
     out = _reduce("mcp__canva__perform-editing-operations",
                   _start_payload(edit_operation_results=[]),
                   {"transaction_id": "TX1",
                    "operations": [{"type": "replace_text", "element_id": SKILLS_EL,
-                                   "text": "Python"}]})
+                                   "text": "Java"}]})
     payload = json.loads(out["hookSpecificOutput"]["updatedToolOutput"][0]["text"])
     assert payload["ok"] is True
     assert payload["overflow"] == {}
@@ -286,7 +309,7 @@ def test_perform_operations_reports_overflow_with_the_pixel_amount():
                   _start_payload(skills_height=238.12, edit_operation_results=[]),
                   {"transaction_id": "TX1",
                    "operations": [{"type": "replace_text", "element_id": SKILLS_EL,
-                                   "text": "far too many skills"}]})
+                                   "text": "Java"}]})
     payload = json.loads(out["hookSpecificOutput"]["updatedToolOutput"][0]["text"])
     assert payload["ok"] is False
     assert payload["overflow"][SKILLS_EL] == pytest.approx(20.0, abs=0.05)
@@ -299,7 +322,7 @@ def test_perform_operations_only_judges_the_elements_it_edited():
                   _start_payload(summary_height=9999, edit_operation_results=[]),
                   {"transaction_id": "TX1",
                    "operations": [{"type": "replace_text", "element_id": SKILLS_EL,
-                                   "text": "Python"}]})
+                                   "text": "Java"}]})
     payload = json.loads(out["hookSpecificOutput"]["updatedToolOutput"][0]["text"])
     assert payload["ok"] is True
 
@@ -314,7 +337,7 @@ def test_perform_operations_reports_failed_operation_as_not_ok():
         ]),
         {"transaction_id": "TX1",
          "operations": [{"type": "replace_text", "element_id": SKILLS_EL,
-                         "text": "Python"}]})
+                         "text": "Java"}]})
     payload = json.loads(out["hookSpecificOutput"]["updatedToolOutput"][0]["text"])
     assert payload["ok"] is False
     assert len(payload["failed_operations"]) == 1
@@ -331,7 +354,7 @@ def test_perform_operations_passes_through_when_edit_operation_results_is_absent
         "mcp__canva__perform-editing-operations", payload_without_results,
         {"transaction_id": "TX1",
          "operations": [{"type": "replace_text", "element_id": SKILLS_EL,
-                         "text": "Python"}]})
+                         "text": "Java"}]})
     assert out == {}
 
 
@@ -360,3 +383,83 @@ def test_unparseable_canva_payload_passes_through():
 
 def test_non_canva_tool_is_untouched():
     assert _reduce("mcp__monid__monid_run", "{}") == {}
+
+
+# --- Behaviours the first live smoke run discovered ---
+
+def test_start_transaction_is_reduced_when_wrapped_in_content_blocks():
+    """The Canva tools return TWO content blocks (JSON + thumbnail), so the payload
+    arrives wrapped rather than as a bare dict. Assuming the bare shape is what made
+    the whole Canva reduction sit inert on the first live run."""
+    wrapped = [{"type": "text", "text": _start_payload()},
+               {"type": "image", "source": {"data": "..."}}]
+    out = _reduce("mcp__canva__start-editing-transaction", wrapped)
+    payload = json.loads(out["hookSpecificOutput"]["updatedToolOutput"][0]["text"])
+    assert payload["transaction_id"] == "TX1"
+    assert "TX1" in hooks._CAPACITY_BY_TRANSACTION
+
+
+def test_start_transaction_is_reduced_when_wrapped_in_a_content_dict():
+    wrapped = {"content": [{"type": "text", "text": _start_payload()}]}
+    out = _reduce("mcp__canva__start-editing-transaction", wrapped)
+    payload = json.loads(out["hookSpecificOutput"]["updatedToolOutput"][0]["text"])
+    assert payload["transaction_id"] == "TX1"
+
+
+def test_perform_reports_not_applied_when_the_text_never_landed():
+    """A find_and_replace_text whose find_text matches nothing changes nothing and
+    still reports status success — measured against the live API. Committing that
+    publishes the untailored template text as though it were tailored."""
+    _reduce("mcp__canva__start-editing-transaction", _start_payload())
+    out = _reduce(
+        "mcp__canva__perform-editing-operations",
+        _start_payload(edit_operation_results=[
+            {"status": "success", "operation_info": {"element_id": SKILLS_EL}}]),
+        {"transaction_id": "TX1",
+         "operations": [{"type": "find_and_replace_text", "element_id": SKILLS_EL,
+                         "find_text": "nothing matches this",
+                         "replace_text": "Rust"}]})
+    payload = json.loads(out["hookSpecificOutput"]["updatedToolOutput"][0]["text"])
+    assert payload["ok"] is False
+    assert payload["failed_operations"] == []          # the API said success
+    assert payload["not_applied"] == [{"element_id": SKILLS_EL,
+                                       "type": "find_and_replace_text"}]
+
+
+def test_perform_reports_applied_when_the_text_did_land():
+    _reduce("mcp__canva__start-editing-transaction", _start_payload())
+    out = _reduce(
+        "mcp__canva__perform-editing-operations",
+        _start_payload(edit_operation_results=[]),
+        {"transaction_id": "TX1",
+         "operations": [{"type": "find_and_replace_text", "element_id": SKILLS_EL,
+                         "find_text": "Ja", "replace_text": "Java"}]})
+    payload = json.loads(out["hookSpecificOutput"]["updatedToolOutput"][0]["text"])
+    assert payload["ok"] is True
+    assert payload["not_applied"] == []
+
+
+def test_guard_allows_one_find_and_replace_operation_per_bullet():
+    """IBM entry [0] has 2 bullets, so 2 single-bullet operations is correct and
+    must not be read as '1 bullet' twice."""
+    ops = [{"type": "find_and_replace_text", "element_id": BULLETS_0_EL,
+            "find_text": "old one", "replace_text": "Reworded one"},
+           {"type": "find_and_replace_text", "element_id": BULLETS_0_EL,
+            "find_text": "old two", "replace_text": "Reworded two"}]
+    assert _call_guard(ops) == {}
+
+
+def test_guard_denies_a_dropped_bullet_across_find_and_replace_operations():
+    ops = [{"type": "find_and_replace_text", "element_id": BULLETS_0_EL,
+            "find_text": "old one", "replace_text": "Only one survives"}]
+    out = _call_guard(ops)
+    assert out["hookSpecificOutput"]["permissionDecision"] == "deny"
+    assert "2 bullet(s)" in out["hookSpecificOutput"]["permissionDecisionReason"]
+
+
+def test_guard_denies_an_extra_bullet_across_find_and_replace_operations():
+    ops = [{"type": "find_and_replace_text", "element_id": BULLETS_0_EL,
+            "find_text": f"old {i}", "replace_text": f"Reworded {i}"}
+           for i in range(3)]
+    out = _call_guard(ops)
+    assert out["hookSpecificOutput"]["permissionDecision"] == "deny"

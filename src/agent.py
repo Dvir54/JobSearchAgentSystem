@@ -19,6 +19,7 @@ from dotenv import load_dotenv
 
 import config
 import hooks
+import tooling
 from tools import resume_tools
 
 # Loaded at import time (not just inside main()) so that MONID_API_KEY is already
@@ -85,7 +86,7 @@ Give a one-sentence reason citing the specific requirement or gap that drove you
 and — for a stretch — what makes the gap learnable for a junior."""
 
 # --- CV-editor rules, relocated verbatim from tailoring.py's SYSTEM_PROMPT ---
-CV_EDITOR_RULES = """You are a CV editor. You adapt one candidate's existing CV to one
+CV_EDITOR_RULES = f"""You are a CV editor. You adapt one candidate's existing CV to one
 specific job posting. You are given the candidate's summary, skills, and their
 Work Experience and Project entries, each entry labelled with an index like [0], [1].
 
@@ -98,7 +99,9 @@ Work through this before writing anything:
 
 Produce:
 - summary: 2-3 sentences positioning the candidate for this specific role, built only
-  from evidence in the CV.
+  from evidence in the CV. It must be at most {tooling.summary_char_limit()} characters
+  — the box it goes in does not grow. Count before you submit; going over is a
+  rejection and costs a round trip.
 - skills: the candidate's skills, ordered so the ones this posting names come first.
   Include only skills already in the CV.
 - experience: every Work Experience entry, referenced by its index. For each entry,
@@ -162,7 +165,8 @@ Follow this workflow exactly:
    postings whose location mentions Israel — since nothing upstream has done it for you.
 
 3b. Create this run's Canva folder with `create-folder`, named
-    "{config.CANVA_FOLDER_PREFIX} — <today's date, YYYY-MM-DD>". Keep its id.
+    "{config.CANVA_FOLDER_PREFIX} — <today's date, YYYY-MM-DD>", with
+    `parent_folder_id: 'root'` (it is required). Keep the new folder's id.
 
 4. For EACH job in `jobs`:
    a. Judge fit yourself using the rubric below: `is_junior_friendly`, `fit_score`
@@ -172,19 +176,29 @@ Follow this workflow exactly:
    c. Otherwise draft the tailored fields using the CV-editor rules below, then call
       `prepare_resume` with `job` as an object with ONLY `id`, `title`, `company`, and
       `url` (never the posting's description text — `prepare_resume` doesn't use it),
-      your score, and those fields. If it returns `rejected: true`, note the reason
-      and move on — do NOT touch Canva. On success it returns both `edits` (for your
-      own records) and `operations` — the exact Canva operations to send.
+      your score, and those fields. On success it returns both `edits` (for your own
+      records) and `operations` — the exact Canva operations to send.
+      If it returns `rejected: true`, read the reason before deciding:
+      - A reason about the FIT (below threshold, not junior-friendly) means this job
+        does not earn a CV. Note it and move on — do NOT touch Canva.
+      - A reason about your DRAFT (a length budget with its numbers, a bullet count,
+        a missing key, a wrong type) is a fixable drafting error, not a verdict on
+        the job. Fix exactly what the message names and call `prepare_resume` again.
+        Try at most twice more, then skip the job and record why.
    d. Call `copy-design` with design_id {config.CANVA_TEMPLATE_DESIGN_ID!r}. Keep the
       new design's id and its edit URL.
-   e. Call `start-editing-transaction` on that new design. Keep the transaction id.
+   e. Call `start-editing-transaction` on that new design. Keep the transaction id
+      AND the `pages` array it returns.
    f. Call `perform-editing-operations` passing the `operations` array `prepare_resume`
-      returned VERBATIM — together with the transaction id and `page_index: 1`. Do NOT
-      construct, reorder, or edit the operations yourself; send exactly what was
-      returned.
-   g. The response is `{{"ok": bool, "overflow": {{element_id: px}}, "failed_operations":
-      [...]}}`. The overflow check is done for you in code — do NOT try to compare
-      element heights yourself.
+      returned VERBATIM — together with the transaction id, `page_index: 1`, and the
+      `pages` array from step (e) exactly as it came back. Do NOT construct, reorder,
+      or edit the operations yourself; send exactly what was returned.
+      The array mixes `replace_text` and `find_and_replace_text` operations, and
+      there may be several against the same element — that is deliberate and
+      measured against the real design. Send them all, in order, unchanged.
+   g. The response is `{{"ok": bool, "overflow": {{element_id: px}},
+      "failed_operations": [...], "not_applied": [...]}}`. The overflow check is done
+      for you in code — do NOT try to compare element heights yourself.
       - If the response has NO `ok` field at all, the overflow check did not run (the
         payload could not be read) — call `cancel-editing-transaction`, record the job
         as skipped, and move on. Do NOT commit.
@@ -204,6 +218,11 @@ Follow this workflow exactly:
           unrelated to overflow. There is no block to shorten and no point retrying the
           same operations — call `cancel-editing-transaction`, record the failure, and
           move on to the next job.
+        - `not_applied` is non-empty: the API reported success but the text is not
+          actually in the element, so committing would publish the UNTAILORED
+          template text as though it were tailored. Call
+          `cancel-editing-transaction`, record the failure, and move on. Do not
+          retry and do not commit.
       NEVER commit a design whose response was not `ok`.
    h. Call `commit-editing-transaction`.
    i. Call `get-export-formats` for this design first — `export-design` requires it and
@@ -295,7 +314,13 @@ def build_options() -> "ClaudeAgentOptions":
         ],
         env={"MAX_MCP_OUTPUT_TOKENS": config.MAX_MCP_OUTPUT_TOKENS},
         permission_mode="dontAsk",
-        max_turns=200,
+        # Sized against the worst realistic run, not the happy path: the per-job
+        # Canva sequence (a-k) is ~12 turns, and each overflow redraft adds ~4 more,
+        # twice per job. Ten qualifying jobs that mostly overflow lands near 210 —
+        # and hitting the cap would cut the run off before `write_index`, losing the
+        # index and the summary while leaving the PDFs orphaned on disk. The
+        # `disallowed_tools` cage is what bounds a runaway; this is just headroom.
+        max_turns=300,
         # The Monid harvestapi result for a 'week' window (100+ jobs with full
         # text+HTML descriptions) can exceed the SDK's 1MB default message buffer;
         # raise it so the completed monid_get_run result fits through the pipe.

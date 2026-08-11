@@ -89,10 +89,13 @@ def test_safe_filename_sanitises_job_id_like_company_and_title():
 
 
 def _tailored_ok():
+    # Entry [0] of the real base_cv (IBM) has exactly 2 bullets, and bullets must be
+    # reworded one-to-one, so a valid draft carries 2 here.
     return {"summary": "Final-semester CS student with backend Python experience. "
                        "Seeking a junior backend role.",
             "skills": ["Python", "SQL"],
-            "experience": [{"entry_index": 0, "bullets": ["Reworded."]}],
+            "experience": [{"entry_index": 0,
+                            "bullets": ["Reworded one.", "Reworded two."]}],
             "projects": [{"entry_index": 0, "bullets": []}]}
 
 
@@ -174,22 +177,57 @@ def test_prepare_rejects_entry_missing_entry_index_key():
 
 def test_prepare_rejects_text_over_the_length_budget():
     tailored = _tailored_ok()
-    tailored["experience"] = [{"entry_index": 0, "bullets": ["x" * 5000]}]
+    tailored["experience"] = [{"entry_index": 0, "bullets": ["x" * 5000, "y" * 5000]}]
     out = prepare_resume(_job(), _score(), tailored)
     assert out["rejected"] is True
     assert "length" in out["reason"].lower() or "budget" in out["reason"].lower()
 
 
-def test_prepare_returns_one_replace_text_operation_per_slot_with_a_real_element_id():
+def test_prepare_rejects_a_bullet_count_that_does_not_match_base_cv():
+    tailored = _tailored_ok()
+    tailored["experience"] = [{"entry_index": 0, "bullets": ["Only one."]}]
+    out = prepare_resume(_job(), _score(), tailored)
+    assert out["rejected"] is True
+    assert "bullet" in out["reason"].lower()
+    assert out["operations"] == []
+
+
+def test_summary_budget_rejection_states_the_actual_and_allowed_lengths():
+    # Without numbers the only way back is to bisect, one tool call per guess.
+    tailored = _tailored_ok()
+    tailored["summary"] = "x" * 5000
+    out = prepare_resume(_job(), _score(), tailored)
+    assert out["rejected"] is True
+    assert "5000" in out["reason"] and "limit" in out["reason"].lower()
+
+
+def test_prepare_returns_operations_with_real_element_ids():
     out = prepare_resume(_job(), _score(), _tailored_ok())
     assert out["rejected"] is False
     ops = out["operations"]
-    assert len(ops) == len(out["edits"])
-    assert {op["element_id"] for op in ops} == set(config.CANVA_ELEMENT_MAP[slot]
-                                                    for slot in out["edits"])
     for op in ops:
-        assert op["type"] == "replace_text"
         assert op["element_id"] in config.CANVA_ELEMENT_MAP.values()
+    by_type = {}
+    for op in ops:
+        by_type.setdefault(op["type"], []).append(op)
+    # summary and skills go wholesale; each bullet gets its own find/replace
+    assert {op["element_id"] for op in by_type["replace_text"]} == {
+        config.CANVA_ELEMENT_MAP["summary"], config.CANVA_ELEMENT_MAP["skills"]}
+    assert len(by_type["find_and_replace_text"]) == 3      # 2 for IBM, 1 for Ness
+    for op in by_type["find_and_replace_text"]:
+        assert op["find_text"] and op["replace_text"]
+
+
+def test_bullet_find_text_matches_the_base_cv_bullet_without_its_full_stop():
+    # The design keeps a trailing '.' that base_cv.md lacks; find/replace is a
+    # substring match, so stripping it from both sides is what makes it match.
+    out = prepare_resume(_job(), _score(), _tailored_ok())
+    pairs = out["edits"]["experience.0.bullets"]
+    base_cv = config.BASE_CV_PATH.read_text(encoding="utf-8")
+    for pair in pairs:
+        assert pair["find"] in base_cv
+        assert not pair["find"].endswith(".")
+        assert not pair["replace"].endswith(".")
 
 
 def test_prepare_rejection_returns_no_operations():
