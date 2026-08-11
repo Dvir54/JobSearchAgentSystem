@@ -44,6 +44,23 @@ LOCATION_KEYWORD = "israel"
 # was 774,006 chars (~193K tokens); a week window is larger.
 MAX_MCP_OUTPUT_TOKENS = "500000"
 
+# A SECOND, separate ceiling, and the one that killed the 2026-08-11 live run.
+# MAX_MCP_OUTPUT_TOKENS above governs the MCP guard that runs BEFORE the hook.
+# What the hook hands BACK is capped at 32,768 bytes by the CLI, with no env var
+# to raise it: past that the result is written to tool-results/ and the model gets
+# a 2,000-byte preview. Measured directly — 32,800 B and 40,001 B both persisted.
+# That run's reduced envelope was 55,198 B (88% of it description text) and the
+# agent could see 1 job of 22.
+#
+# So the reducer no longer serialises descriptions at all: it returns a manifest
+# (id/title/company, ~97 B a job) and holds the full postings in process for
+# `get_job` to serve one at a time. The two values below are belt and braces — the
+# design keeps the envelope near 2KB for a normal run, and these make a pathological
+# one fail loudly instead of silently truncating.
+INLINE_RESULT_LIMIT_BYTES = 32768        # the measured CLI ceiling; do not raise
+SAFE_ENVELOPE_BYTES = 24000              # our own budget, well inside it
+MAX_JOB_DESCRIPTION_CHARS = 12000        # so one absurd posting cannot breach it
+
 # --- Canva (Phase R2) ---
 # Copies are made from a pinned TEMPLATE, not the live master résumé, so edits to
 # the master cannot break a run mid-flight. Re-duplicate the master and re-validate

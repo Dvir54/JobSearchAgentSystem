@@ -66,6 +66,39 @@ def clean_jobs(raw_items):
     return jobs
 
 
+# Full postings, held in process so descriptions never have to fit in a tool result.
+# Written by reduce_run_payload, read by get_job. Same pattern as the Canva hook's
+# retained geometry: the data the agent needs stays here, and it asks for the one
+# piece it is working on.
+_JOBS_BY_ID = {}
+
+
+def _manifest_entry(job):
+    """The only fields that cross into a tool result for every job at once."""
+    return {"id": job["id"], "title": job["title"], "company": job["company"]}
+
+
+def get_job(job_id):
+    """One posting in full, by id — the descriptions the manifest deliberately omits.
+
+    Returns an `error` rather than raising: an unknown id must cost one job, not
+    the run. The description is capped so that no single posting can approach the
+    32KB inline ceiling either.
+    """
+    job = _JOBS_BY_ID.get(str(job_id))
+    if job is None:
+        known = len(_JOBS_BY_ID)
+        return {"error": f"no job with id {job_id!r} in this run ({known} known). "
+                         f"Use an id exactly as it appeared in the manifest."}
+    description = job.get("description") or ""
+    if len(description) > config.MAX_JOB_DESCRIPTION_CHARS:
+        keep = config.MAX_JOB_DESCRIPTION_CHARS
+        print(f"[get_job] {job_id}: description {len(description)} chars, truncated "
+              f"to {keep}", file=sys.stderr)
+        description = description[:keep] + "\n[description truncated]"
+    return {**job, "description": description, "error": ""}
+
+
 @dataclass
 class _Score:
     is_junior_friendly: bool
@@ -311,6 +344,11 @@ def reduce_run_payload(tool_response):
                   f"out (kept=0, dropped_non_israel={dropped_non_israel}) — likely "
                   f"cause: upstream schema change in the 'location' field", file=sys.stderr)
 
+        # Descriptions stay here; only the manifest crosses into the tool result.
+        _JOBS_BY_ID.clear()
+        for job in jobs:
+            _JOBS_BY_ID[str(job["id"])] = job
+
         envelope = {
             "status": "COMPLETED",
             "runId": run.get("runId"),
@@ -319,9 +357,29 @@ def reduce_run_payload(tool_response):
             "kept": kept,
             "dropped_duplicate": dropped_duplicate,
             "dropped_non_israel": dropped_non_israel,
-            "jobs": jobs,
+            "jobs": [_manifest_entry(job) for job in jobs],
+            "note": ("`jobs` lists every kept posting by id/title/company only. "
+                     "Call `get_job` with an id for that posting's description, "
+                     "url and location."),
         }
         text = json.dumps(envelope, ensure_ascii=False)
+
+        # Should be unreachable — the manifest is ~97 bytes a job, so this needs
+        # ~250 postings. If it ever fires, the run degrades visibly (fewer jobs,
+        # counts still honest) instead of being silently cut to a 2KB preview,
+        # which is exactly how the 2026-08-11 run failed.
+        if len(text) > config.SAFE_ENVELOPE_BYTES:
+            room = config.SAFE_ENVELOPE_BYTES - (len(text) - len(json.dumps(
+                envelope["jobs"], ensure_ascii=False)))
+            fits = max(1, room // 120)
+            print(f"[reduce] WARNING: manifest for {kept} jobs is {len(text)} bytes, "
+                  f"over the {config.SAFE_ENVELOPE_BYTES} budget (CLI drops anything "
+                  f"past {config.INLINE_RESULT_LIMIT_BYTES} to a 2KB preview). "
+                  f"Listing the first {fits}; the rest are unreachable this run.",
+                  file=sys.stderr)
+            envelope["jobs"] = envelope["jobs"][:fits]
+            envelope["manifest_truncated_to"] = fits
+            text = json.dumps(envelope, ensure_ascii=False)
     except Exception as exc:                      # noqa: BLE001 - degrade, never crash the run
         print(f"[reduce] reduction failed ({exc!r}); passing raw output through",
               file=sys.stderr)
@@ -330,7 +388,9 @@ def reduce_run_payload(tool_response):
     print(f"[reduce] run={envelope['runId']} window={envelope['window']} "
           f"fetched={fetched} kept={kept} "
           f"dropped_duplicate={dropped_duplicate} "
-          f"dropped_non_israel={dropped_non_israel}", file=sys.stderr)
+          f"dropped_non_israel={dropped_non_israel} "
+          f"envelope={len(text)}B/{config.INLINE_RESULT_LIMIT_BYTES}B "
+          f"descriptions_held={len(_JOBS_BY_ID)}", file=sys.stderr)
     return text
 
 

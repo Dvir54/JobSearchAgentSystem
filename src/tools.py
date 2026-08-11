@@ -104,6 +104,14 @@ async def prepare_resume(args: dict) -> dict:
     return _json_result(_prepare_resume_impl(args["job"], args["score"], args["tailored"]))
 
 
+@tool("get_job", "Return one job posting in full — description, url, location — by "
+      "the id it was listed under in the search manifest. The manifest carries only "
+      "id/title/company, so this is the only way to read a posting's requirements.",
+      {"job_id": str})
+async def get_job(args: dict) -> dict:
+    return _json_result(tooling.get_job(args["job_id"]))
+
+
 @tool("save_pdf", "Download an exported Canva PDF into this run's output directory.",
       {"export_url": str, "company": str, "title": str, "job_id": str})
 async def save_pdf(args: dict) -> dict:
@@ -121,5 +129,5 @@ async def write_index(args: dict) -> dict:
 resume_tools = create_sdk_mcp_server(
     name="resume_tools",
     version="1.0.0",
-    tools=[get_resume, prepare_resume, save_pdf, write_index],
+    tools=[get_resume, get_job, prepare_resume, save_pdf, write_index],
 )

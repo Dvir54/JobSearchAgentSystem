@@ -157,20 +157,34 @@ Follow this workflow exactly:
    `status` and `runId` (confirming which run this is), `window` (the posting-age window
    this search used), `fetched`, `kept`, `dropped_duplicate`, `dropped_non_israel`, and
    `jobs`. Receiving this object means the run has already reached COMPLETED — stop
-   polling as soon as you see it. Work through `jobs`. Do not try to re-filter or
-   re-dedupe it, and do not look for a `filter_jobs` tool — there is none. If instead you
-   ever receive a raw run object that has an `output` list but no `jobs` field, the
-   reduction step did not run for that result: in that case, and only that case, work
-   through `output` yourself — dedupe by `id` (first occurrence wins) and keep only
-   postings whose location mentions Israel — since nothing upstream has done it for you.
+   polling as soon as you see it. Do not try to re-filter or re-dedupe it, and do not
+   look for a `filter_jobs` tool — there is none.
+
+   `jobs` is a MANIFEST: one entry per kept posting carrying `id`, `title` and
+   `company` ONLY. The descriptions are deliberately not in it — all of them together
+   are far too large to be handed over at once, and a previous run died exactly that
+   way. `get_job` is how you read a posting: it returns that job's description, url
+   and location in full. Every job in `jobs` is reachable, so `kept` is the true size
+   of this search — judge all of them.
+
+   If you ever receive a raw run object that has an `output` list but no `jobs` field,
+   the reduction step did not run for that result: in that case, and only that case,
+   work through `output` yourself — dedupe by `id` (first occurrence wins) and keep
+   only postings whose location mentions Israel — since nothing upstream has done it
+   for you.
 
 3b. Create this run's Canva folder with `create-folder`, named
     "{config.CANVA_FOLDER_PREFIX} — <today's date, YYYY-MM-DD>", with
     `parent_folder_id: 'root'` (it is required). Keep the new folder's id.
 
 4. For EACH job in `jobs`:
-   a. Judge fit yourself using the rubric below: `is_junior_friendly`, `fit_score`
-      (0-100), `match_kind` ("direct" or "stretch"), and a one-sentence `reason`.
+   a. Call `get_job` with that job's `id` to read the posting — you need its
+      requirements text to judge it, and the manifest does not carry it. Keep the
+      `url` it returns; you will need it later and it is not in the manifest either.
+      Then judge fit yourself using the rubric below: `is_junior_friendly`,
+      `fit_score` (0-100), `match_kind` ("direct" or "stretch"), and a one-sentence
+      `reason`. If `get_job` returns an `error`, record the job as skipped with that
+      reason and move on.
    b. If the job is NOT junior-friendly or `fit_score` < {config.FIT_THRESHOLD},
       skip it — no Canva copy, no PDF. Just note it as skipped.
    c. Otherwise draft the tailored fields using the CV-editor rules below, then call
@@ -294,6 +308,7 @@ def build_options() -> "ClaudeAgentOptions":
             "mcp__monid__monid_get_run",
             "mcp__monid__monid_balance",
             "mcp__resume_tools__get_resume",
+            "mcp__resume_tools__get_job",
             "mcp__resume_tools__prepare_resume",
             "mcp__resume_tools__save_pdf",
             "mcp__resume_tools__write_index",
@@ -313,6 +328,12 @@ def build_options() -> "ClaudeAgentOptions":
         disallowed_tools=[
             "Bash", "Grep", "Glob", "Read", "Write", "Edit", "NotebookEdit",
             "Agent", "Task", "PowerShell", "WebFetch", "WebSearch",
+            # Added after the 2026-08-11 run: blocked from reading an oversized
+            # tool result off disk, the agent probed every one of these looking for
+            # a way in. Monitor runs shell commands and was stopped only by
+            # permission mode — the safety net, not this list. Deny them outright.
+            "Monitor", "TaskCreate", "TaskOutput", "TaskList", "TaskUpdate",
+            "TaskStop", "TaskGet", "Workflow", "SendMessage", "EnterWorktree",
         ],
         env={"MAX_MCP_OUTPUT_TOKENS": config.MAX_MCP_OUTPUT_TOKENS},
         permission_mode="dontAsk",
