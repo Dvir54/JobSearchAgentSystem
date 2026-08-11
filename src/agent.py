@@ -237,7 +237,9 @@ Follow this workflow exactly:
 
 5. Once every job has been judged, call `write_index` **once**, with one entry per
    résumé written — `company`, `title`, `fit_score`, `match_kind`, `reason`, `apply_url`,
-   `pdf_filename`, `canva_edit_url`, `corrections` — plus the search `window` and the
+   `pdf_filename`, `canva_design_id` (the id from step (d) — this is what the index
+   links to, so do not omit it), `canva_edit_url`, `corrections` — plus the search
+   `window` and the
    count of jobs judged but skipped. `write_index` is the only way to create that file.
    Then report the same summary in your final message.
 

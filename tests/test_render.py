@@ -7,6 +7,7 @@ def _entry(**overrides):
              "reason": "Python and LLM tooling line up with the internship.",
              "apply_url": "https://www.linkedin.com/jobs/view/4446167840",
              "pdf_filename": "Alignerr_Software_Engineer_(AI_Training)_4446167840.pdf",
+             "canva_design_id": "DAHR-XiHc_U",
              "canva_edit_url": "https://www.canva.com/d/abc123",
              "corrections": []}
     entry.update(overrides)
@@ -57,3 +58,19 @@ def test_index_handles_an_empty_run():
     out = render_index([], window="24h", skipped_count=9)
     assert "9" in out
     assert "No résumés" in out or "no résumés" in out
+
+
+def test_index_links_canva_by_permanent_design_id_not_the_rotating_token():
+    """copy-design returns a /d/<token> URL and those rotate; the design id does
+    not. Every copy also inherits the template's title, so a dead link would leave
+    no way to tell the designs apart."""
+    out = render_index([_entry()], window="24h", skipped_count=0)
+    assert "https://www.canva.com/design/DAHR-XiHc_U" in out
+    assert "abc123" not in out
+
+
+def test_index_falls_back_to_the_recorded_url_when_no_design_id():
+    entry = _entry()
+    del entry["canva_design_id"]
+    out = render_index([entry], window="24h", skipped_count=0)
+    assert "https://www.canva.com/d/abc123" in out
