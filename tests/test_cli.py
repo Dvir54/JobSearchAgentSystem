@@ -1,6 +1,7 @@
 import pytest
 
 import cli
+import config
 import db
 import tooling
 
@@ -148,3 +149,92 @@ def test_a_failing_failure_email_does_not_mask_the_original_error(wired,
         cur.execute("SELECT error FROM runs")
         # The run row must record what actually broke the run, not the mailer.
         assert "502" in cur.fetchone()[0]
+
+
+def test_missing_env_keys_names_every_absent_key(monkeypatch):
+    for key in cli.REQUIRED_ENV_KEYS:
+        monkeypatch.delenv(key, raising=False)
+    monkeypatch.setenv("MONID_API_KEY", "monid_live_x")
+    missing = cli.missing_env_keys()
+    assert "MONID_API_KEY" not in missing
+    assert "GMAIL_APP_PASSWORD" in missing
+
+
+def test_a_blank_env_key_counts_as_missing(monkeypatch):
+    # A key left as `GMAIL_APP_PASSWORD=` in .env is present but useless.
+    for key in cli.REQUIRED_ENV_KEYS:
+        monkeypatch.setenv(key, "x")
+    monkeypatch.setenv("GMAIL_APP_PASSWORD", "   ")
+    assert cli.missing_env_keys() == ["GMAIL_APP_PASSWORD"]
+
+
+def test_scheduled_command_points_at_the_venv_executable():
+    # A scheduled, non-interactive session does not get the interactive PATH, so
+    # the task must name an absolute executable.
+    command, working_dir = cli.scheduled_command()
+    assert command.endswith(" run")
+    assert command.startswith('"')
+    assert "jobs" in command.lower()
+    assert working_dir == str(config.PROJECT_ROOT)
+
+
+def _setup_wired(pg, monkeypatch):
+    monkeypatch.setattr(cli, "start_container", lambda: None)
+    monkeypatch.setattr(cli, "wait_for_database", lambda: None)
+    monkeypatch.setattr(db, "session", lambda: pg)
+
+
+def test_setup_applies_the_schema_and_registers_the_task(pg, monkeypatch, capsys):
+    _setup_wired(pg, monkeypatch)
+    monkeypatch.setattr(cli.mailer, "verify_credentials", lambda: None)
+    monkeypatch.setattr(cli, "missing_env_keys", list)
+    registered = {}
+    monkeypatch.setattr(cli.scheduling, "register",
+                        lambda command, working_dir: registered.update(
+                            command=command, dir=working_dir))
+    monkeypatch.setattr(cli.scheduling, "wake_timer_state",
+                        lambda: "Wake timers — plugged in: enabled")
+
+    assert cli.command_setup() == 0
+    assert registered["command"].endswith(" run")
+    assert "Wake timers" in capsys.readouterr().out
+
+
+def test_setup_stops_and_names_missing_keys(pg, monkeypatch, capsys):
+    _setup_wired(pg, monkeypatch)
+    monkeypatch.setattr(cli, "missing_env_keys", lambda: ["GMAIL_APP_PASSWORD"])
+    registered = []
+    monkeypatch.setattr(cli.scheduling, "register",
+                        lambda command, working_dir: registered.append(1))
+    assert cli.command_setup() == 1
+    assert "GMAIL_APP_PASSWORD" in capsys.readouterr().out
+    # Never leave a scheduled task behind that is guaranteed to fail.
+    assert registered == []
+
+
+def test_setup_stops_when_the_app_password_is_wrong(pg, monkeypatch, capsys):
+    _setup_wired(pg, monkeypatch)
+    monkeypatch.setattr(cli, "missing_env_keys", list)
+
+    def refuse():
+        raise RuntimeError("Gmail rejected the login for me@example.com")
+
+    monkeypatch.setattr(cli.mailer, "verify_credentials", refuse)
+    registered = []
+    monkeypatch.setattr(cli.scheduling, "register",
+                        lambda command, working_dir: registered.append(1))
+    # Better to fail here, on the operator's screen, than silently at 9am.
+    assert cli.command_setup() == 1
+    assert "Gmail rejected" in capsys.readouterr().out
+    assert registered == []
+
+
+def test_setup_reports_a_container_that_will_not_start(pg, monkeypatch, capsys):
+    monkeypatch.setattr(db, "session", lambda: pg)
+
+    def down():
+        raise RuntimeError("Is Docker Desktop running?")
+
+    monkeypatch.setattr(cli, "start_container", down)
+    assert cli.command_setup() == 1
+    assert "Docker Desktop" in capsys.readouterr().out

@@ -4,14 +4,18 @@ Orchestration only — every decision of substance lives in db.py, tooling.py or
 the agent's own judgement. This module's job is the run's shape: preflight, open
 the run row, drive the session, close the row, report by email.
 """
+import os
+import subprocess
 import sys
 import time
+from pathlib import Path
 
 from dotenv import load_dotenv
 
 import config
 import db
 import mailer
+import scheduling
 import tooling
 
 
@@ -111,4 +115,87 @@ def command_run():
         print(f"[run] the run succeeded but the digest could not be sent: {exc}",
               file=sys.stderr)
         return 1
+    return 0
+
+
+REQUIRED_ENV_KEYS = ("MONID_API_KEY", "ANTHROPIC_API_KEY", "GMAIL_ADDRESS",
+                     "GMAIL_APP_PASSWORD")
+
+
+def missing_env_keys():
+    """Every required key absent or blank in the environment (after .env loads).
+
+    Blank counts as missing: `GMAIL_APP_PASSWORD=` in .env is present and useless,
+    and would otherwise pass setup and fail at 9am.
+    """
+    return [key for key in REQUIRED_ENV_KEYS if not os.environ.get(key, "").strip()]
+
+
+def start_container():
+    """`docker compose up -d`, from the repo root. Raises with docker's output."""
+    result = subprocess.run(["docker", "compose", "up", "-d"],
+                            cwd=str(config.PROJECT_ROOT), capture_output=True,
+                            text=True)
+    if result.returncode != 0:
+        raise RuntimeError(
+            f"`docker compose up -d` failed: "
+            f"{(result.stderr or result.stdout).strip()}. Is Docker Desktop "
+            f"running?")
+
+
+def scheduled_command():
+    """(command line, working directory) for the scheduled task.
+
+    Names the venv's `jobs.exe` by absolute path: a scheduled non-interactive
+    session does not inherit the interactive PATH, and a bare `jobs` would
+    produce a task that fails silently every morning.
+    """
+    executable = Path(sys.executable).parent / "jobs.exe"
+    return f'"{executable}" run', str(config.PROJECT_ROOT)
+
+
+def command_setup():
+    """Install everything, once. Idempotent: re-running repairs a partial install."""
+    load_dotenv()
+
+    print("Starting Postgres...")
+    try:
+        start_container()
+        wait_for_database()
+    except Exception as exc:                      # noqa: BLE001 - report and stop
+        print(f"  FAILED: {exc}")
+        return 1
+    print("  container is up and answering")
+
+    print("Applying the schema...")
+    db.apply_schema()
+    print("  runs, seen, matches are in place")
+
+    print("Checking .env...")
+    missing = missing_env_keys()
+    if missing:
+        print(f"  MISSING: {', '.join(missing)}")
+        print("  Add them to .env and run `jobs setup` again.")
+        return 1
+    print("  all required keys present")
+
+    print("Checking the Gmail app password...")
+    try:
+        mailer.verify_credentials()
+    except Exception as exc:                      # noqa: BLE001 - report and stop
+        print(f"  FAILED: {exc}")
+        return 1
+    print("  Gmail accepted the login")
+
+    print("Registering the 9am task...")
+    command, working_dir = scheduled_command()
+    try:
+        scheduling.register(command, working_dir)
+    except Exception as exc:                      # noqa: BLE001 - report and stop
+        print(f"  FAILED: {exc}")
+        return 1
+    print(f"  {config.TASK_NAME} registered: {command}")
+    print(f"  {scheduling.wake_timer_state()}")
+    print("\nSetup complete. The first run happens at 09:00; "
+          "`jobs run` starts one now.")
     return 0
