@@ -94,8 +94,20 @@ def render_digest(run, matches):
             _html_body(run, matches))
 
 
+def app_password():
+    """The app password with spaces removed.
+
+    Google displays app passwords as four groups of four ("abcd efgh ijkl mnop"),
+    and pasting it as shown is the obvious thing to do — but Gmail's SMTP login
+    rejects the spaced form, producing an authentication error that looks like a
+    wrong password. Stripping them costs nothing and removes a failure mode that
+    would otherwise surface at 09:00.
+    """
+    return config.GMAIL_APP_PASSWORD.replace(" ", "").strip()
+
+
 def _require_credentials():
-    if not config.GMAIL_ADDRESS or not config.GMAIL_APP_PASSWORD:
+    if not config.GMAIL_ADDRESS or not app_password():
         raise RuntimeError(
             "GMAIL_ADDRESS and GMAIL_APP_PASSWORD must both be set in .env. "
             "Generate an app password at Google Account → Security → App "
@@ -140,7 +152,7 @@ def send(subject, text_body, html_body):
     message = build_message(subject, text_body, html_body)
     try:
         with _smtp() as smtp:
-            smtp.login(config.GMAIL_ADDRESS, config.GMAIL_APP_PASSWORD)
+            smtp.login(config.GMAIL_ADDRESS, app_password())
             smtp.send_message(message)
     except (smtplib.SMTPException, OSError) as exc:
         raise _readable_failure(exc) from None
@@ -152,6 +164,6 @@ def verify_credentials():
     _require_credentials()
     try:
         with _smtp() as smtp:
-            smtp.login(config.GMAIL_ADDRESS, config.GMAIL_APP_PASSWORD)
+            smtp.login(config.GMAIL_ADDRESS, app_password())
     except (smtplib.SMTPException, OSError) as exc:
         raise _readable_failure(exc) from None

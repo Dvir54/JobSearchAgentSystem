@@ -189,3 +189,47 @@ def test_an_unreachable_server_is_reported_readably(monkeypatch):
     with pytest.raises(RuntimeError) as excinfo:
         mailer.send("s", "t", "<p>h</p>")
     assert "smtp.gmail.com" in str(excinfo.value)
+
+
+def test_a_spaced_app_password_is_normalised(monkeypatch):
+    # Google shows app passwords as "abcd efgh ijkl mnop"; pasting it verbatim
+    # is the obvious thing to do, and Gmail's SMTP login rejects the spaces.
+    import config
+    monkeypatch.setattr(config, "GMAIL_APP_PASSWORD", "abcd efgh ijkl mnop")
+    assert mailer.app_password() == "abcdefghijklmnop"
+
+
+def test_send_logs_in_with_the_normalised_password(monkeypatch):
+    import config
+    monkeypatch.setattr(config, "GMAIL_ADDRESS", "me@example.com")
+    monkeypatch.setattr(config, "GMAIL_APP_PASSWORD", "abcd efgh ijkl mnop")
+    used = {}
+
+    class FakeSMTP:
+        def __init__(self, host, port, timeout=None):
+            pass
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *exc):
+            return False
+
+        def login(self, user, password):
+            used["password"] = password
+
+        def send_message(self, message):
+            pass
+
+    monkeypatch.setattr(mailer.smtplib, "SMTP_SSL", FakeSMTP)
+    mailer.send("s", "t", "<p>h</p>")
+    assert used["password"] == "abcdefghijklmnop"
+
+
+def test_a_password_of_only_spaces_counts_as_missing(monkeypatch):
+    import pytest
+    import config
+    monkeypatch.setattr(config, "GMAIL_ADDRESS", "me@example.com")
+    monkeypatch.setattr(config, "GMAIL_APP_PASSWORD", "    ")
+    with pytest.raises(RuntimeError):
+        mailer.send("s", "t", "<p>h</p>")
