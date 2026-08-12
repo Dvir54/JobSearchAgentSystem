@@ -1,0 +1,150 @@
+import pytest
+
+import cli
+import db
+import tooling
+
+
+@pytest.fixture
+def wired(pg, monkeypatch):
+    """cli wired to the test database with the network stubbed out."""
+    monkeypatch.setattr(cli, "wait_for_database", lambda: None)
+    monkeypatch.setattr(db, "session", lambda: pg)
+    monkeypatch.setattr(tooling, "_db_conn", lambda: pg)
+    sent = {}
+    monkeypatch.setattr(cli.mailer, "send",
+                        lambda subject, text, html: sent.update(
+                            subject=subject, text=text, html=html))
+    return sent
+
+
+def _stats(monkeypatch, *, fetched, dropped_seen, examined, matched):
+    monkeypatch.setattr(tooling, "last_run_stats",
+                        lambda: {"fetched": fetched, "kept": examined,
+                                 "dropped_duplicate": 0, "dropped_non_israel": 0,
+                                 "dropped_seen": dropped_seen})
+    monkeypatch.setattr(tooling, "examined_count", lambda: examined)
+    monkeypatch.setattr(tooling, "matched_count", lambda: matched)
+
+
+def test_a_matched_run_closes_ok_and_emails_the_digest(wired, monkeypatch, pg):
+    def fake_session():
+        run_id = tooling.current_run_id()
+        db.record_verdict("111", run_id, "Backend Dev", "Acme", 82, "matched",
+                          "good fit", conn=pg)
+        db.insert_match("111", run_id, title="Backend Dev", company="Acme",
+                        location="Israel", apply_url="https://a/1",
+                        posted_date="2026-08-12", canva_design_id="DAG1",
+                        canva_url="https://c/1", pdf=b"%PDF",
+                        pdf_filename="Acme_111.pdf", conn=pg)
+        return {"summary": "done", "cost": 2.21, "is_error": False}
+
+    monkeypatch.setattr(cli, "_drive_session", fake_session)
+    _stats(monkeypatch, fetched=111, dropped_seen=80, examined=1, matched=1)
+
+    assert cli.command_run() == 0
+    assert wired["subject"] == "1 new job match"
+    assert "jobs pdf 111" in wired["text"]
+    with pg.cursor() as cur:
+        cur.execute("SELECT status, fetched_count, skipped_seen_count, "
+                    "matched_count FROM runs")
+        assert cur.fetchone() == ("ok", 111, 80, 1)
+
+
+def test_a_run_with_no_matches_closes_empty(wired, monkeypatch, pg):
+    monkeypatch.setattr(cli, "_drive_session",
+                        lambda: {"summary": "none", "cost": 0.4,
+                                 "is_error": False})
+    _stats(monkeypatch, fetched=90, dropped_seen=90, examined=0, matched=0)
+    assert cli.command_run() == 0
+    assert wired["subject"] == "No new matches today"
+    with pg.cursor() as cur:
+        cur.execute("SELECT status FROM runs")
+        assert cur.fetchone()[0] == "empty"
+
+
+def test_the_run_id_is_set_before_the_session_starts(wired, monkeypatch):
+    seen = {}
+
+    def capture():
+        seen["run_id"] = tooling.current_run_id()
+        return {"summary": "", "cost": 0.0, "is_error": False}
+
+    monkeypatch.setattr(cli, "_drive_session", capture)
+    _stats(monkeypatch, fetched=0, dropped_seen=0, examined=0, matched=0)
+    cli.command_run()
+    # record_verdict and save_pdf file rows against it; unset means orphaned rows.
+    assert seen["run_id"] is not None
+
+
+def test_a_crashing_session_fails_the_run_and_emails_the_error(wired, monkeypatch,
+                                                               pg):
+    def boom():
+        raise RuntimeError("Monid returned 502 after 3 attempts")
+
+    monkeypatch.setattr(cli, "_drive_session", boom)
+    assert cli.command_run() == 1
+    assert "502" in wired["subject"]
+    with pg.cursor() as cur:
+        cur.execute("SELECT status, error FROM runs")
+        status, error = cur.fetchone()
+    assert status == "failed"
+    assert "502" in error
+
+
+def test_rows_written_before_a_crash_survive(wired, monkeypatch, pg):
+    def half_way():
+        db.record_verdict("111", tooling.current_run_id(), "T", "C", 40,
+                          "rejected", "no", conn=pg)
+        raise RuntimeError("boom")
+
+    monkeypatch.setattr(cli, "_drive_session", half_way)
+    cli.command_run()
+    with pg.cursor() as cur:
+        cur.execute("SELECT count(*) FROM seen")
+        # Partial progress is real progress: tomorrow must not re-judge this job.
+        assert cur.fetchone()[0] == 1
+
+
+def test_preflight_failure_reports_without_a_run_row(wired, monkeypatch, pg):
+    def down():
+        raise RuntimeError("Docker is not running")
+
+    monkeypatch.setattr(cli, "wait_for_database", down)
+    assert cli.command_run() == 1
+    assert "Docker is not running" in wired["subject"]
+    with pg.cursor() as cur:
+        cur.execute("SELECT count(*) FROM runs")
+        # The database is the broken thing; there is nowhere to record this.
+        assert cur.fetchone()[0] == 0
+
+
+def test_a_failing_digest_send_still_exits_nonzero(wired, monkeypatch):
+    monkeypatch.setattr(cli, "_drive_session",
+                        lambda: {"summary": "ok", "cost": 1.0, "is_error": False})
+    _stats(monkeypatch, fetched=1, dropped_seen=0, examined=0, matched=0)
+
+    def refuse(subject, text, html):
+        raise RuntimeError("Gmail rejected the login")
+
+    monkeypatch.setattr(cli.mailer, "send", refuse)
+    # The one failure that cannot self-report by email; the exit code is all
+    # Task Scheduler will have.
+    assert cli.command_run() == 1
+
+
+def test_a_failing_failure_email_does_not_mask_the_original_error(wired,
+                                                                  monkeypatch, pg):
+    def boom():
+        raise RuntimeError("Monid returned 502")
+
+    def refuse(subject, text, html):
+        raise RuntimeError("SMTP also down")
+
+    monkeypatch.setattr(cli, "_drive_session", boom)
+    monkeypatch.setattr(cli.mailer, "send", refuse)
+    assert cli.command_run() == 1
+    with pg.cursor() as cur:
+        cur.execute("SELECT error FROM runs")
+        # The run row must record what actually broke the run, not the mailer.
+        assert "502" in cur.fetchone()[0]

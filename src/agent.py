@@ -395,10 +395,15 @@ GOAL_PROMPT = (
 )
 
 
-async def main() -> int:
+async def run_session() -> dict:
+    """Drive one autonomous session. Returns what happened; decides nothing.
+
+    The run row, the digest and the exit code belong to cli.py — this function's
+    only job is to run the agent and report what came back.
+    """
     load_dotenv()
 
-    final_summary = None
+    final_summary, cost, is_error = None, None, False
     async for message in query(prompt=GOAL_PROMPT, options=build_options()):
         if isinstance(message, AssistantMessage):
             for block in message.content:
@@ -410,13 +415,18 @@ async def main() -> int:
                     print(block.text)
         elif isinstance(message, ResultMessage):
             final_summary = message.result
+            cost = message.total_cost_usd
+            is_error = message.is_error
             print(f"\n[session finished] subtype={message.subtype} "
                   f"is_error={message.is_error} cost=${message.total_cost_usd}")
 
     print("\n=== Final summary ===")
     print(final_summary or "(no final summary returned)")
-    return 0
+    return {"summary": final_summary, "cost": cost, "is_error": is_error}
 
 
 if __name__ == "__main__":
-    sys.exit(asyncio.run(main()))
+    # Kept so `python src/agent.py` still drives a bare session for debugging.
+    # The supported entry point is `jobs run`, which also owns the run row, the
+    # digest, and the exit code.
+    asyncio.run(run_session())
