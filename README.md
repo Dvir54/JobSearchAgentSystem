@@ -49,7 +49,17 @@ GMAIL_APP_PASSWORD=sixteencharacters
 ```
 
 The Gmail app password comes from Google Account → Security → App passwords, and needs
-2-step verification switched on. Put your résumé at the repo root as `base_cv.md`.
+2-step verification switched on.
+
+You also need your résumé at the repo root as `base_cv.md` (git-ignored). **Canva supplies
+the layout; `base_cv.md` supplies the facts.** It is what the agent is allowed to reword,
+and — more importantly — it is what the truthfulness guards diff against to catch an
+invented skill or a fabricated bullet. That check cannot read from Canva, because Canva is
+the thing being written to: you cannot validate a write against its own target.
+
+When your real CV changes, update both — `base_cv.md` for the content and the Canva
+template for the design. If they drift apart, drafts start getting rejected because the
+guards insist on content the design no longer has.
 
 Then:
 
