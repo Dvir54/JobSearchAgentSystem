@@ -506,14 +506,6 @@ def _fetch_bytes(url):
         return response.read()
 
 
-def run_dir(today=None):
-    """output/<YYYY-MM-DD>/ for this run, created on demand."""
-    from datetime import date
-    stamp = today or date.today().isoformat()
-    path = config.OUTPUT_DIR / stamp
-    path.mkdir(parents=True, exist_ok=True)
-    return path
-
 
 def save_pdf(export_url, job_id, canva_design_id, canva_url):
     """Download an exported Canva PDF and store it in the database.
@@ -567,11 +559,3 @@ def save_pdf(export_url, job_id, canva_design_id, canva_url):
     return {"saved": filename, "error": "", "filename": filename}
 
 
-def write_index(entries, window, skipped_count, today=None):
-    """Write this run's index.md - the operator view that cannot live inside a CV."""
-    from render import render_index
-    path = run_dir(today) / "index.md"
-    path.write_text(render_index(entries, window, skipped_count), encoding="utf-8")
-    print(f"[write_index] wrote {path} ({len(entries)} entries, "
-          f"{skipped_count} skipped)", file=sys.stderr)
-    return {"written": str(path)}

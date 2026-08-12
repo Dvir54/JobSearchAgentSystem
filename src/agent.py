@@ -352,9 +352,10 @@ def build_options() -> "ClaudeAgentOptions":
         # Sized against the worst realistic run, not the happy path: the per-job
         # Canva sequence (a-k) is ~12 turns, and each overflow redraft adds ~4 more,
         # twice per job. Ten qualifying jobs that mostly overflow lands near 210 —
-        # and hitting the cap would cut the run off before `write_index`, losing the
-        # index and the summary while leaving the PDFs orphaned on disk. The
-        # `disallowed_tools` cage is what bounds a runaway; this is just headroom.
+        # and hitting the cap cuts the run off mid-loop, leaving the remaining jobs
+        # unjudged and unrecorded, so tomorrow pays to judge them again. Rows
+        # already written do survive. The `disallowed_tools` cage is what bounds a
+        # runaway; this is just headroom.
         max_turns=300,
         # The Monid harvestapi result for a 'week' window (100+ jobs with full
         # text+HTML descriptions) can exceed the SDK's 1MB default message buffer;

@@ -1,161 +1,116 @@
 # Job Search Agent
 
-A command-line tool that finds junior software jobs in Israel, uses Claude to judge
-which ones genuinely fit *you*, and writes a complete, job-tailored version of your
-résumé for each strong match — so you only ever review real candidates, and every
-résumé is truthful to your actual CV.
+A daily agent that finds junior software jobs in Israel, judges which ones genuinely fit
+*you*, and renders a job-tailored version of your real Canva résumé as a PDF for each
+strong match. It emails you a digest every morning at 09:00.
 
-It stops at "here's a tailored résumé worth sending." It does **not** apply for you.
-
----
-
-## What it does, in one run
-
-You run one command. The agent then:
-
-1. **Searches** LinkedIn (via Monid, which routes to Apify's harvestapi scraper) for 5 role types in Israel, entry-level filter.
-2. **Scores** every posting with one Claude call — is it junior-friendly, and how well does it fit your CV (0–100)?
-3. **Keeps** only jobs that are junior-friendly *and* score ≥ 70.
-4. **Tailors** your résumé to each surviving job with a second Claude call — reordering and rewording only what your CV already supports.
-5. **Checks** the result for invented content, then **writes** a complete tailored résumé to `output/`.
-
-Everything is deterministic Python except two points of judgment (scoring and tailoring),
-which are the only places Claude is used.
+It stops at "here's a tailored CV worth sending." It does **not** apply for you.
 
 ---
 
-## The pipeline
+## What happens each morning
 
-```
-base_cv.md ─┐
-            ▼
-   ┌──────────────┐   ┌──────────────┐   ┌───────────────┐   ┌──────────────┐
-   │  1. SEARCH   │──▶│  2. SCORE    │──▶│  3. TAILOR    │──▶│  4. WRITE     │
-   │  jobs.py     │   │  scoring.py  │   │  tailoring.py │   │  render.py    │
-   │  (Monid)     │   │  (Claude)    │   │  (Claude)     │   │  (→ output/)  │
-   └──────────────┘   └──────────────┘   └───────────────┘   └──────────────┘
-                            │                    │
-                       fit < 70?            invented skill or
-                        → skip              dropped entry? → drop
-```
+Windows Task Scheduler runs `jobs run` at 09:00 — waking the laptop if it is asleep and
+plugged in, otherwise running the moment you next log in. The agent then:
 
-- **Search** (`jobs.py`) — the only file that knows jobs come from Monid → harvestapi. Turns messy scraper JSON into clean `JobPosting` objects.
-- **Score** (`scoring.py`) — one Claude call per job. Judges seniority from the *requirements*, not the title, and scores fit only against your CV.
-- **Tailor** (`tailoring.py`) — one Claude call per match, with extended reasoning. Reorders your experience/projects most-relevant-first and rewords bullets. **Never invents** — job titles, dates, and project tech lines are passed through untouched; skills and bullets are only reworded, never added.
-- **Write** (`render.py`) — assembles the full résumé and writes it to `output/`.
-- **Orchestration** (`main.py`) — runs the fixed sequence and enforces the two safety guards.
+1. **Searches** LinkedIn (via Monid → Apify's harvestapi scraper) for five role types in
+   Israel, entry-level, posted in the last 24 hours.
+2. **Reduces** the raw scrape in-process, before the model sees any of it: dedupe by id,
+   keep only Israel-located roles, and **drop every posting already judged on an earlier
+   day**. Yesterday's jobs cost nothing today — not even tokens.
+3. **Judges** each remaining posting against your CV, then records a verdict for every one
+   of them — kept or rejected — so tomorrow skips it.
+4. **Tailors** your résumé for each job above the fit threshold, copies your Canva design,
+   applies the edits, and exports a PDF.
+5. **Stores** each CV in Postgres with its score, reasoning and Canva link.
+6. **Emails** you one digest: the matches, or "nothing today", or the failure.
 
-### Two truthfulness guards
-
-Before any résumé is written, it must pass both:
-
-- **Invented-skills guard** — drops the résumé if it lists any skill not in your CV.
-- **Entry-coverage guard** — drops it if any job or project was silently dropped or duplicated.
-
-A prompt asks Claude to stay truthful; these guards enforce it in code. (They check the
-skills list and entry structure — you should still read the final résumé once.)
+You get exactly one email every morning, so silence means the schedule itself is broken —
+the one failure nothing inside the program can report.
 
 ---
 
-## Your input: `base_cv.md`
+## Install
 
-Your real résumé, written as structured markdown. The structure is what lets the tool
-copy your factual sections verbatim and tailor only the rest.
-
-```markdown
-# Your Name
-
-Contact info here (this whole block above the first ## is copied verbatim)
-
-## About Me
-A short summary. (tailored per job)
-
-## Work Experience
-### Job Title | Company
-*Dates*
-
-- A bullet describing what you did.   (reworded per job; titles/dates untouched)
-
-## Projects
-### Project Name
-Tech, stack, here                     (reordered per job; name + tech untouched)
-
-## Skills
-Python, SQL, Git                      (reordered per job)
-
-## Education
-...                                   (copied verbatim)
-
-## Languages
-...                                   (copied verbatim)
-```
-
-- **Tailored sections:** About Me, Skills, Work Experience, Projects.
-- **Copied verbatim:** the contact block and every other section (Education, Languages, Military Service, Volunteering, …).
-- `## Section`, `### Entry`, and `- bullet` are the markers the parser relies on.
-
-`base_cv.md` is git-ignored — it never leaves your machine.
-
----
-
-## Your output: a complete tailored résumé
-
-For each job scoring ≥ 70, the tool writes `output/{Company}_{Role}.md`:
-
-```
-- **Fit:** 82/100 — <one-line reason>
-- **Apply at:** <LinkedIn URL>
-
----
-<your complete résumé, all sections in order, only the relevant parts tailored>
-```
-
-The block above the `---` is metadata for your review; the sendable résumé starts after it.
-
-**Output for now:** résumés land flat in `output/` — one `{Company}_{Role}.md` per job that scores
-≥ 70 and passes the Israel-location filter. Re-running overwrites same-named files; there are no
-dated per-day folders yet (those arrive with the daily-run phase).
-
----
-
-## Setup
-
-**Requirements:** Python 3.11+ and two API keys.
+Requires Python 3.11+, Docker Desktop, and a Canva account with your résumé in it.
 
 ```bash
-# 1. Create the virtual environment and install dependencies
 python -m venv .venv
-.venv/Scripts/python.exe -m pip install -r requirements.txt   # Windows
-# (on macOS/Linux: .venv/bin/python -m pip install -r requirements.txt)
-
-# 2. Add your API keys to a .env file at the repo root (git-ignored):
-#    ANTHROPIC_API_KEY=sk-ant-...
-#    MONID_API_KEY=monid_live_...
-
-# 3. Put your résumé at the repo root as base_cv.md (see format above).
+.venv/Scripts/pip install -e .
 ```
 
-- **Anthropic key** — from the Anthropic Console (pay-per-use; a run costs cents).
-- **Monid key** — from `app.monid.ai/access/api-keys`; pay-as-you-go, billed against a prepaid balance.
+Put these in `.env` at the repo root (git-ignored):
+
+```
+ANTHROPIC_API_KEY=sk-ant-...
+MONID_API_KEY=monid_live_...
+GMAIL_ADDRESS=you@gmail.com
+GMAIL_APP_PASSWORD=sixteencharacters
+```
+
+The Gmail app password comes from Google Account → Security → App passwords, and needs
+2-step verification switched on. Put your résumé at the repo root as `base_cv.md`.
+
+Then:
+
+```bash
+jobs setup
+```
+
+That starts the Postgres container, creates the schema, checks every key, logs into Gmail
+to prove the app password works, registers the 09:00 task, and tells you whether your power
+plan will let it wake the machine. It is safe to re-run.
 
 ---
 
-## Running it
+## Daily use
+
+Nothing. Read the email.
 
 ```bash
-# See the harvestapi search input and projected cost without spending anything:
-.venv/Scripts/python.exe src/main.py --dry-run
-
-# Run for real (scrapes jobs, scores each, writes tailored résumés):
-.venv/Scripts/python.exe src/main.py
+jobs pdf 4446164871   # write one stored CV next to you and open it
+jobs run              # start a run by hand
 ```
 
-Each posting costs one Claude scoring call; each match costs one more tailoring call.
-A full run scrapes ~125 jobs (~$0.19 on Monid) plus Claude usage.
+The digest carries no attachments — `jobs pdf <id>` is how a CV gets back out of the
+database. The id is in the email.
 
-**Tuning** (all in `src/config.py`): the 5 role queries, `MAX_ITEMS_PER_QUERY` (jobs per
-query), `FIT_THRESHOLD` (the score a job needs to earn a résumé), and the search filters
-`EXPERIENCE_LEVELS`, `POSTED_LIMIT`, and `LOCATION_KEYWORD` (keeps only Israel-located jobs).
+---
+
+## Where the data lives
+
+A local `postgres:16` container bound to `127.0.0.1:5433`, data in the `jobsearch-pgdata`
+Docker volume. Port 5433 rather than the default because this machine already runs a native
+PostgreSQL 18 service on 5432.
+
+| Table | What it holds |
+|---|---|
+| `runs` | One row per invocation: counts, window, status, error. |
+| `seen` | Every job ever examined, with its score, verdict and one-line reason. The primary key **is** the dedup mechanism. |
+| `matches` | The full record for jobs that passed, including the PDF bytes. |
+
+Score and reasoning live only in `seen`; `matches` joins to them, so the email can never
+report a different score than the one the CV was gated on.
+
+There are **no backups**. `docker compose down -v` or a Docker Desktop factory reset
+destroys the history permanently. The agent itself recovers — it just forgets.
+
+---
+
+## How truthfulness is enforced
+
+Claude does the judging and the drafting. Nothing else is delegated to it.
+
+- **`prepare_resume`** gates every draft in code: fit threshold, invented-skills check,
+  entry coverage, length budget. It returns the exact Canva operations and writes nothing.
+- **A PreToolUse hook** inspects what is genuinely about to be written to Canva. The agent
+  makes the MCP calls itself, so this — not `prepare_resume` — is the real boundary.
+- **A PostToolUse hook** reads back the actual geometry to confirm nothing overflowed the
+  page and the text really landed. Canva reports `success` for replacements that matched
+  nothing, so results are never trusted on their own.
+
+The agent has no Bash, Read, Write, WebFetch or Agent tools. A failure cannot degrade into
+hand-parsing.
 
 ---
 
@@ -163,34 +118,44 @@ query), `FIT_THRESHOLD` (the score a job needs to earn a résumé), and the sear
 
 ```
 src/
-  config.py       tunable settings, model id, paths
-  jobs.py         job source (Monid → harvestapi) — the swap seam
-  monid.py        Monid API transport (run + poll) — used by jobs.py
-  scoring.py      relevance scoring (Claude)
-  tailoring.py    résumé tailoring + truthfulness guards (Claude)
-  resume.py       parses base_cv.md into sections and entries
-  render.py       assembles the complete tailored résumé
-  main.py         the pipeline entry point
-tests/            test suite (runs with no network — Claude/Monid are stubbed)
+  config.py       tunable settings, paths, measured limits
+  agent.py        the workflow prompt, SDK options, hooks — one autonomous session
+  tools.py        the in-process MCP tools the agent may call
+  tooling.py      everything those tools actually do; the payload reducer
+  hooks.py        payload reduction + the Canva write guard
+  canva.py        element parsing, capacity maths, overflow detection
+  db.py           every database access — no SQL lives anywhere else
+  mailer.py       renders and sends the daily digest
+  cli.py          the `jobs` command: setup, run, pdf
+  scheduling.py   Task Scheduler XML and registration
+  jobs.py         normalises raw scraper JSON
+  resume.py       parses base_cv.md
+  tailoring.py    truthfulness guards
+  render.py       PDF filenames
+schema.sql        the three tables
+docker-compose.yml
+tests/            the suite; database tests use a real throwaway Postgres
 docs/             design specs and implementation plans
-pyproject.toml    pytest config
-requirements.txt  dependencies
 ```
 
-Run the tests with: `.venv/Scripts/python.exe -m pytest`
+Run the tests with `.venv/Scripts/pytest`. They skip the database tests with a clear
+message if Docker is not running.
 
 ---
 
-## What it does NOT do (yet)
+## Tuning
 
-Deliberately out of scope for now: cross-run/daily deduplication (a seen-jobs memory across
-days), ranking/top-N, PDF export, auto-apply, and scheduling. Within a single run it already
-dedupes repeated postings and keeps only Israel-located jobs. The tool hands you a tailored
-draft — you decide whether to send it.
+All in `src/config.py`: the five role queries, `MAX_ITEMS_PER_QUERY`, `FIT_THRESHOLD` (the
+score a job needs to earn a CV), `POSTED_LIMIT` (the search window, `24h` for daily),
+`EXPERIENCE_LEVELS`, `LOCATION_KEYWORD`, and `SCHEDULE_TIME`.
+
+A normal day costs roughly $1.50–2.50, mostly Claude, plus about $0.12 on Monid.
 
 ---
 
-## Tech stack
+## What it does NOT do
 
-Python 3.11+ · `anthropic` (Claude, model `claude-opus-4-8`) · `requests` (Monid →
-harvestapi LinkedIn scraper) · `pydantic` (structured output) · `python-dotenv` · `pytest`.
+No auto-apply, no cover letters, no ranking beyond the fit score. Canva has no delete API,
+so per-run designs accumulate and need occasional manual cleanup. A failed run is a lost
+day: transient source errors retry inside the run, but the search window is never widened
+afterwards to catch up.

@@ -1,13 +1,6 @@
 import tooling
 
 
-def test_run_dir_is_dated_and_created(tmp_path, monkeypatch):
-    monkeypatch.setattr(tooling.config, "OUTPUT_DIR", tmp_path)
-    d = tooling.run_dir(today="2026-07-30")
-    assert d == tmp_path / "2026-07-30"
-    assert d.is_dir()
-
-
 def db_start(pg):
     import db
     return db.start_run("24h", pg)

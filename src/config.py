@@ -19,10 +19,11 @@ EXPERIENCE_SECTION = "Work Experience"
 PROJECTS_SECTION = "Projects"
 TAILORED_SECTIONS = (SUMMARY_SECTION, SKILLS_SECTION, EXPERIENCE_SECTION, PROJECTS_SECTION)
 
-# The repo root — one level up from src/, where data and output live.
+# The repo root — one level up from src/, where the base CV and schema live.
+# There is no OUTPUT_DIR: every tailored CV goes into Postgres (see db.py), and
+# `jobs pdf` writes one back out on demand.
 PROJECT_ROOT = Path(__file__).parent.parent
 BASE_CV_PATH = PROJECT_ROOT / "base_cv.md"
-OUTPUT_DIR = PROJECT_ROOT / "output"
 
 # --- Monid job source ---
 MONID_MCP_URL = "https://mcp.monid.ai/v1"
