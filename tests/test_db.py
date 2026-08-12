@@ -85,3 +85,47 @@ def test_filter_unseen_returns_only_new_ids(pg):
 
 def test_filter_unseen_handles_an_empty_list(pg):
     assert db.filter_unseen([], pg) == set()
+
+
+PDF_BYTES = b"%PDF-1.4\n%\xe2\xe3\xcf\xd3\nfake pdf body\n%%EOF\n"
+
+
+def _match(pg, job_id, score, company="Acme"):
+    run_id = db.start_run("24h", pg)
+    db.record_verdict(job_id, run_id, "Backend Dev", company, score, "matched",
+                      "why", conn=pg)
+    db.insert_match(job_id, run_id, title="Backend Dev", company=company,
+                    location="Tel Aviv, Israel", apply_url="https://apply/1",
+                    posted_date="2026-08-12", canva_design_id="DAG1",
+                    canva_url="https://canva/1", pdf=PDF_BYTES,
+                    pdf_filename=f"{company}_{job_id}.pdf", conn=pg)
+    return run_id
+
+
+def test_pdf_bytes_round_trip_unchanged(pg):
+    _match(pg, "111", 82)
+    pdf, filename = db.fetch_pdf("111", pg)
+    assert pdf == PDF_BYTES          # byte-identical, not merely similar
+    assert filename == "Acme_111.pdf"
+
+
+def test_fetch_pdf_returns_none_for_an_unknown_job(pg):
+    assert db.fetch_pdf("does-not-exist", pg) is None
+
+
+def test_matches_for_run_joins_the_verdict_and_orders_by_score(pg):
+    run_id = db.start_run("24h", pg)
+    for job_id, score in (("111", 74), ("222", 91)):
+        db.record_verdict(job_id, run_id, f"Role {job_id}", "Acme", score,
+                          "matched", f"reason {job_id}", conn=pg)
+        db.insert_match(job_id, run_id, title=f"Role {job_id}", company="Acme",
+                        location="Israel", apply_url=f"https://apply/{job_id}",
+                        posted_date="2026-08-12", canva_design_id="DAG1",
+                        canva_url=f"https://canva/{job_id}", pdf=PDF_BYTES,
+                        pdf_filename=f"{job_id}.pdf", conn=pg)
+    rows = db.matches_for_run(run_id, pg)
+    assert [r["job_id"] for r in rows] == ["222", "111"]      # best score first
+    assert rows[0]["fit_score"] == 91
+    assert rows[0]["reason"] == "reason 222"                  # came from `seen`
+    assert rows[0]["apply_url"] == "https://apply/222"
+    assert "pdf" not in rows[0]        # never carry blobs into the digest query

@@ -124,3 +124,53 @@ def filter_unseen(job_ids, conn=None):
         cur.execute("SELECT job_id FROM seen WHERE job_id = ANY(%s)", (ids,))
         known = {row[0] for row in cur.fetchall()}
     return set(ids) - known
+
+
+def insert_match(job_id, run_id, *, title, company, location, apply_url,
+                 posted_date, canva_design_id, canva_url, pdf, pdf_filename,
+                 conn=None):
+    """Store one tailored CV. `pdf` is the exported bytes.
+
+    ON CONFLICT overwrites: a job re-tailored after a redraft should end with the
+    CV that was actually committed, not the first attempt.
+    """
+    with _conn(conn).cursor() as cur:
+        cur.execute("""INSERT INTO matches (job_id, run_id, title, company,
+                              location, apply_url, posted_date, canva_design_id,
+                              canva_url, pdf, pdf_filename)
+                       VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+                       ON CONFLICT (job_id) DO UPDATE SET
+                              run_id = EXCLUDED.run_id,
+                              canva_design_id = EXCLUDED.canva_design_id,
+                              canva_url = EXCLUDED.canva_url,
+                              pdf = EXCLUDED.pdf,
+                              pdf_filename = EXCLUDED.pdf_filename,
+                              created_at = now()""",
+                    (str(job_id), run_id, title, company, location, apply_url,
+                     posted_date, canva_design_id, canva_url, pdf, pdf_filename))
+
+
+def fetch_pdf(job_id, conn=None):
+    """(bytes, filename) for one stored CV, or None. Backs `jobs pdf <id>`."""
+    with _conn(conn).cursor() as cur:
+        cur.execute("SELECT pdf, pdf_filename FROM matches WHERE job_id = %s",
+                    (str(job_id),))
+        row = cur.fetchone()
+        return (bytes(row[0]), row[1]) if row else None
+
+
+def matches_for_run(run_id, conn=None):
+    """This run's matches for the digest, best fit first.
+
+    Joins `seen` for the score and reason rather than duplicating them into
+    `matches`, so the email can never report a different score than the one the
+    CV was gated on. Deliberately does not select `pdf`: the digest carries no
+    attachments and pulling blobs here would load megabytes to render text.
+    """
+    with _conn(conn).cursor() as cur:
+        cur.execute("""SELECT m.job_id, m.title, m.company, m.apply_url,
+                              m.canva_url, s.fit_score, s.reason
+                         FROM matches m JOIN seen s ON s.job_id = m.job_id
+                        WHERE m.run_id = %s
+                     ORDER BY s.fit_score DESC, m.company""", (run_id,))
+        return [_row_to_dict(cur, row) for row in cur.fetchall()]
