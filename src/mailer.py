@@ -9,6 +9,8 @@ summary of what it did: the model can be wrong about what it wrote, the rows
 cannot.
 """
 import html as html_escape
+import smtplib
+from email.message import EmailMessage
 
 import config
 
@@ -90,3 +92,66 @@ def render_digest(run, matches):
     """
     return (_subject(run, matches), _text_body(run, matches),
             _html_body(run, matches))
+
+
+def _require_credentials():
+    if not config.GMAIL_ADDRESS or not config.GMAIL_APP_PASSWORD:
+        raise RuntimeError(
+            "GMAIL_ADDRESS and GMAIL_APP_PASSWORD must both be set in .env. "
+            "Generate an app password at Google Account → Security → App "
+            "passwords (2-step verification must be on).")
+
+
+def build_message(subject, text_body, html_body):
+    """The digest as a multipart message, addressed from the operator to
+    themselves. No images and no tracking — there is no one else to render for."""
+    message = EmailMessage()
+    message["Subject"] = subject
+    message["From"] = config.GMAIL_ADDRESS
+    message["To"] = config.GMAIL_ADDRESS
+    message.set_content(text_body)
+    message.add_alternative(html_body, subtype="html")
+    return message
+
+
+def _smtp():
+    """SMTP_SSL on 465: implicit TLS, so there is no plaintext phase to fail
+    open on. The timeout is deliberate — a hung socket at 9am would otherwise
+    hold the scheduled task open indefinitely."""
+    return smtplib.SMTP_SSL(config.SMTP_HOST, config.SMTP_PORT, timeout=30)
+
+
+def _readable_failure(exc):
+    """Turn an SMTP exception into something safe to print.
+
+    Never let the app password into the message: this text reaches stderr, the
+    run row, and Task Scheduler's history.
+    """
+    if isinstance(exc, smtplib.SMTPAuthenticationError):
+        return RuntimeError(
+            f"Gmail rejected the login for {config.GMAIL_ADDRESS}. App password "
+            f"wrong, revoked, or 2-step verification off. (SMTP {exc.smtp_code})")
+    return RuntimeError(f"Could not reach {config.SMTP_HOST}: {exc}")
+
+
+def send(subject, text_body, html_body):
+    """Send the digest. Raises on failure — the caller decides what that means."""
+    _require_credentials()
+    message = build_message(subject, text_body, html_body)
+    try:
+        with _smtp() as smtp:
+            smtp.login(config.GMAIL_ADDRESS, config.GMAIL_APP_PASSWORD)
+            smtp.send_message(message)
+    except (smtplib.SMTPException, OSError) as exc:
+        raise _readable_failure(exc) from None
+
+
+def verify_credentials():
+    """Log in and disconnect without sending. `jobs setup` calls this so a bad
+    app password fails on the operator's screen, not silently at 9am."""
+    _require_credentials()
+    try:
+        with _smtp() as smtp:
+            smtp.login(config.GMAIL_ADDRESS, config.GMAIL_APP_PASSWORD)
+    except (smtplib.SMTPException, OSError) as exc:
+        raise _readable_failure(exc) from None

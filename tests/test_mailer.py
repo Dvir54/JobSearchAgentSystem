@@ -86,3 +86,106 @@ def test_a_failed_run_that_produced_matches_still_reports_the_failure():
     subject, text, _ = mailer.render_digest(run, MATCHES)
     assert subject.startswith("Job agent FAILED:")
     assert "crashed after two CVs" in text
+
+
+def test_build_message_is_multipart_with_both_bodies(monkeypatch):
+    import config
+    monkeypatch.setattr(config, "GMAIL_ADDRESS", "me@example.com")
+    message = mailer.build_message("Subject", "plain", "<p>rich</p>")
+    assert message["Subject"] == "Subject"
+    assert message["From"] == "me@example.com"
+    assert message["To"] == "me@example.com"        # mail from you to yourself
+    assert message.get_body("plain").get_content().strip() == "plain"
+    assert "<p>rich</p>" in message.get_body("html").get_content()
+
+
+def test_non_ascii_survives_the_encode(monkeypatch):
+    # Israeli listings bring Hebrew company names, and the digest uses em-dashes.
+    import config
+    monkeypatch.setattr(config, "GMAIL_ADDRESS", "me@example.com")
+    body = "מובילאיי — fit 82"
+    message = mailer.build_message("נמצאו משרות", body, f"<p>{body}</p>")
+    assert message.get_body("plain").get_content().strip() == body
+    raw = message.as_bytes()
+    assert b"\xd7\x9e" in raw or b"=?utf-8?" in raw.lower()
+
+
+def test_send_logs_in_and_sends_once(monkeypatch):
+    import config
+    monkeypatch.setattr(config, "GMAIL_ADDRESS", "me@example.com")
+    monkeypatch.setattr(config, "GMAIL_APP_PASSWORD", "app-password")
+    calls = {}
+
+    class FakeSMTP:
+        def __init__(self, host, port, timeout=None):
+            calls["endpoint"] = (host, port)
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *exc):
+            return False
+
+        def login(self, user, password):
+            calls["login"] = (user, password)
+
+        def send_message(self, message):
+            calls["subject"] = message["Subject"]
+
+    monkeypatch.setattr(mailer.smtplib, "SMTP_SSL", FakeSMTP)
+    mailer.send("Subject", "plain", "<p>rich</p>")
+    assert calls["endpoint"] == (config.SMTP_HOST, config.SMTP_PORT)
+    assert calls["login"] == ("me@example.com", "app-password")
+    assert calls["subject"] == "Subject"
+
+
+def test_send_refuses_when_credentials_are_missing(monkeypatch):
+    import pytest
+    import config
+    monkeypatch.setattr(config, "GMAIL_ADDRESS", "")
+    monkeypatch.setattr(config, "GMAIL_APP_PASSWORD", "")
+    with pytest.raises(RuntimeError) as excinfo:
+        mailer.send("Subject", "plain", "<p>rich</p>")
+    assert "GMAIL_ADDRESS" in str(excinfo.value)
+
+
+def test_a_failing_login_does_not_leak_the_password(monkeypatch):
+    import pytest
+    import config
+    monkeypatch.setattr(config, "GMAIL_ADDRESS", "me@example.com")
+    monkeypatch.setattr(config, "GMAIL_APP_PASSWORD", "sixteen-char-sec")
+
+    class FakeSMTP:
+        def __init__(self, host, port, timeout=None):
+            pass
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *exc):
+            return False
+
+        def login(self, user, password):
+            raise mailer.smtplib.SMTPAuthenticationError(535, b"bad password")
+
+    monkeypatch.setattr(mailer.smtplib, "SMTP_SSL", FakeSMTP)
+    with pytest.raises(RuntimeError) as excinfo:
+        mailer.verify_credentials()
+    # This text reaches stderr, the run row, and Task Scheduler history.
+    assert "sixteen-char-sec" not in str(excinfo.value)
+    assert "App password" in str(excinfo.value)
+
+
+def test_an_unreachable_server_is_reported_readably(monkeypatch):
+    import pytest
+    import config
+    monkeypatch.setattr(config, "GMAIL_ADDRESS", "me@example.com")
+    monkeypatch.setattr(config, "GMAIL_APP_PASSWORD", "pw")
+
+    def boom(host, port, timeout=None):
+        raise OSError("getaddrinfo failed")
+
+    monkeypatch.setattr(mailer.smtplib, "SMTP_SSL", boom)
+    with pytest.raises(RuntimeError) as excinfo:
+        mailer.send("s", "t", "<p>h</p>")
+    assert "smtp.gmail.com" in str(excinfo.value)
