@@ -125,3 +125,7 @@ SMTP_HOST = "smtp.gmail.com"
 SMTP_PORT = 465                      # implicit TLS; no STARTTLS negotiation
 GMAIL_ADDRESS = os.environ.get("GMAIL_ADDRESS", "")
 GMAIL_APP_PASSWORD = os.environ.get("GMAIL_APP_PASSWORD", "")
+
+# --- Scheduling (Phase R3) ---
+TASK_NAME = "JobSearchAgent"
+SCHEDULE_TIME = "09:00:00"
