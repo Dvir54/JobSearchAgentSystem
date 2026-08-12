@@ -50,3 +50,44 @@ def apply_schema(conn=None):
     sql = config.SCHEMA_PATH.read_text(encoding="utf-8")
     with _conn(conn).cursor() as cur:
         cur.execute(sql)
+
+
+def _row_to_dict(cur, row):
+    if row is None:
+        return None
+    return dict(zip([c.name for c in cur.description], row))
+
+
+def start_run(search_window, conn=None):
+    """Open a run row and return its id. Everything downstream references it."""
+    with _conn(conn).cursor() as cur:
+        cur.execute(
+            "INSERT INTO runs (search_window) VALUES (%s) RETURNING id",
+            (search_window,))
+        return cur.fetchone()[0]
+
+
+def finish_run(run_id, *, fetched, skipped_seen, examined, matched, status,
+               conn=None):
+    with _conn(conn).cursor() as cur:
+        cur.execute("""UPDATE runs
+                          SET finished_at = now(), fetched_count = %s,
+                              skipped_seen_count = %s, examined_count = %s,
+                              matched_count = %s, status = %s
+                        WHERE id = %s""",
+                    (fetched, skipped_seen, examined, matched, status, run_id))
+
+
+def fail_run(run_id, error, conn=None):
+    """Close a run as failed. Counts stay at whatever the run reached — partial
+    progress is real progress, and `seen` keeps it from being redone."""
+    with _conn(conn).cursor() as cur:
+        cur.execute("""UPDATE runs SET finished_at = now(), status = 'failed',
+                              error = %s
+                        WHERE id = %s""", (error, run_id))
+
+
+def get_run(run_id, conn=None):
+    with _conn(conn).cursor() as cur:
+        cur.execute("SELECT * FROM runs WHERE id = %s", (run_id,))
+        return _row_to_dict(cur, cur.fetchone())
