@@ -144,12 +144,14 @@ remembering to check.
 | `title`, `company`, `location` | `text` | |
 | `apply_url` | `text` | |
 | `posted_date` | `text` | as the source reports it |
-| `fit_score` | `int` | |
-| `reasoning` | `text` | full text, not the one-liner |
 | `canva_design_id`, `canva_url` | `text` | permanent design id, per R2 |
 | `pdf` | `bytea` | the exported CV |
 | `pdf_filename` | `text` | the R2 filename, retained for `jobs pdf` |
 | `created_at` | `timestamptz` | |
+
+The fit score and its reasoning are **not** repeated here — they live in `seen` and are read
+by joining on `job_id`. The digest and the CV therefore cannot disagree about why a job
+qualified.
 
 PDF bytes go in `bytea`: ~100KB per CV at a handful per day is a few MB a year, well inside
 what Postgres handles inline, and it keeps the record in one place with no parallel file
