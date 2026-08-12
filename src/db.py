@@ -91,3 +91,36 @@ def get_run(run_id, conn=None):
     with _conn(conn).cursor() as cur:
         cur.execute("SELECT * FROM runs WHERE id = %s", (run_id,))
         return _row_to_dict(cur, cur.fetchone())
+
+
+def record_verdict(job_id, run_id, title, company, fit_score, verdict, reason,
+                   conn=None):
+    """Remember that this job was examined. Returns True if newly recorded.
+
+    ON CONFLICT DO NOTHING makes the primary key the dedup mechanism: re-judging
+    a job the agent has already seen cannot overwrite the verdict the CV was
+    written from, and cannot raise.
+    """
+    with _conn(conn).cursor() as cur:
+        cur.execute("""INSERT INTO seen (job_id, run_id, title, company,
+                                         fit_score, verdict, reason)
+                       VALUES (%s, %s, %s, %s, %s, %s, %s)
+                       ON CONFLICT (job_id) DO NOTHING""",
+                    (str(job_id), run_id, title, company, fit_score, verdict,
+                     reason))
+        return cur.rowcount == 1
+
+
+def filter_unseen(job_ids, conn=None):
+    """The subset of `job_ids` this agent has never examined.
+
+    One query per run, ids only — the reduction hook calls this before any
+    posting reaches the model, so a job seen yesterday costs nothing today.
+    """
+    ids = [str(job_id) for job_id in job_ids]
+    if not ids:
+        return set()
+    with _conn(conn).cursor() as cur:
+        cur.execute("SELECT job_id FROM seen WHERE job_id = ANY(%s)", (ids,))
+        known = {row[0] for row in cur.fetchall()}
+    return set(ids) - known

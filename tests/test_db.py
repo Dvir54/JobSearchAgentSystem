@@ -50,3 +50,38 @@ def test_fail_run_records_the_error(pg):
     assert row["status"] == "failed"
     assert "502" in row["error"]
     assert row["finished_at"] is not None
+
+
+def test_record_verdict_stores_both_verdicts(pg):
+    run_id = db.start_run("24h", pg)
+    db.record_verdict("111", run_id, "Backend Dev", "Acme", 82, "matched",
+                      "Python and Postgres in the core stack", conn=pg)
+    db.record_verdict("222", run_id, "Senior SRE", "Globex", 30, "rejected",
+                      "Requires 5 years of production Kubernetes", conn=pg)
+    with pg.cursor() as cur:
+        cur.execute("SELECT job_id, verdict, fit_score FROM seen ORDER BY job_id")
+        assert cur.fetchall() == [("111", "matched", 82), ("222", "rejected", 30)]
+
+
+def test_recording_a_known_job_is_a_no_op(pg):
+    run_id = db.start_run("24h", pg)
+    assert db.record_verdict("111", run_id, "T", "C", 80, "matched", "first",
+                             conn=pg) is True
+    # Same id, different verdict: the original row must win. The first judgement
+    # is the one the CV was written from.
+    assert db.record_verdict("111", run_id, "T", "C", 10, "rejected", "second",
+                             conn=pg) is False
+    with pg.cursor() as cur:
+        cur.execute("SELECT fit_score, reason FROM seen WHERE job_id = '111'")
+        assert cur.fetchone() == (80, "first")
+
+
+def test_filter_unseen_returns_only_new_ids(pg):
+    run_id = db.start_run("24h", pg)
+    db.record_verdict("111", run_id, "T", "C", 80, "matched", "r", conn=pg)
+    db.record_verdict("222", run_id, "T", "C", 20, "rejected", "r", conn=pg)
+    assert db.filter_unseen(["111", "222", "333"], pg) == {"333"}
+
+
+def test_filter_unseen_handles_an_empty_list(pg):
+    assert db.filter_unseen([], pg) == set()
