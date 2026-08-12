@@ -138,6 +138,14 @@ _SEARCH_RECIPE_BODY = {
     "sortBy": "date",
 }
 
+# The endpoint takes the search fields inside a `body` envelope. The prompt used to
+# hand the agent the bare body as `input`, so monid_run rejected the first call of
+# every run and the agent had to improvise the wrapper — which it did correctly, but
+# improvisation is exactly what an unattended run should never depend on.
+# tooling._window() has always read run["input"]["body"], which is the same fact
+# stated from the other end.
+_SEARCH_RECIPE = {"body": _SEARCH_RECIPE_BODY}
+
 WORKFLOW = f"""You are running one autonomous job-search-and-tailoring session end to end.
 Follow this workflow exactly:
 
@@ -148,7 +156,9 @@ Follow this workflow exactly:
 2. Call `monid_run` with EXACTLY this pinned search recipe (do not change any field):
    - provider: {config.MONID_PROVIDER!r}
    - endpoint: {config.MONID_ENDPOINT!r}
-   - input: {_SEARCH_RECIPE_BODY!r}
+   - input: {_SEARCH_RECIPE!r}
+   The search fields go inside `body` — that envelope is what the endpoint's schema
+   expects, and a flat input is rejected. Send it exactly as written above.
    `monid_run` is asynchronous — after starting it, poll `monid_get_run` with the returned
    run id until the run reports completion.
 

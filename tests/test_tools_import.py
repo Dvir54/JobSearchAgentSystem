@@ -94,3 +94,17 @@ def test_agent_still_denies_the_builtin_tools(monkeypatch):
     # save_pdf/record_verdict exist precisely because these stay denied
     for denied in ("Bash", "Read", "Write", "WebFetch", "Agent"):
         assert denied in opts.disallowed_tools
+
+
+def test_the_pinned_search_recipe_carries_the_body_envelope():
+    """The endpoint takes the search fields inside `body`. The prompt used to hand
+    over the bare body as `input`, so monid_run rejected the first call of every
+    run and the agent improvised the wrapper. tooling._window() reads
+    run["input"]["body"], which is the same fact from the other end."""
+    import agent
+    import tooling
+    assert agent._SEARCH_RECIPE == {"body": agent._SEARCH_RECIPE_BODY}
+    assert "'body'" in agent.WORKFLOW
+    # The two ends must agree: what we send is what the reducer reads back.
+    echoed = {"input": agent._SEARCH_RECIPE}
+    assert tooling._window(echoed) == agent._SEARCH_RECIPE_BODY["postedLimit"]
