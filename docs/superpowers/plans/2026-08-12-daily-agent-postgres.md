@@ -4,7 +4,7 @@
 
 **Goal:** Turn the existing one-shot pipeline into a self-running daily agent that remembers every job it has examined in a local Postgres, stores each tailored CV as a PDF in that database, and emails a digest every morning at 09:00.
 
-**Architecture:** A Dockerised `postgres:16` on `127.0.0.1:5432` becomes the system of record. Three tables — `runs`, `seen`, `matches`. Cross-run dedup is a `filter_unseen` query inside the existing PostToolUse reduction hook, so previously-examined postings never enter the model's context. A new `cli.py` owns the run lifecycle: preflight, open run row, drive the agent session, close the run row, send the digest. `output/` dated folders and `index.md` are removed.
+**Architecture:** A Dockerised `postgres:16` on `127.0.0.1:5433` becomes the system of record. Three tables — `runs`, `seen`, `matches`. Cross-run dedup is a `filter_unseen` query inside the existing PostToolUse reduction hook, so previously-examined postings never enter the model's context. A new `cli.py` owns the run lifecycle: preflight, open run row, drive the agent session, close the run row, send the digest. `output/` dated folders and `index.md` are removed.
 
 **Tech Stack:** Python 3.11+, `psycopg[binary]>=3.1`, `postgres:16` via Docker Compose, stdlib `smtplib`/`email` for Gmail SMTP, Windows `schtasks` driven by a generated task XML, pytest.
 
@@ -88,11 +88,11 @@ Add to the end of `src/config.py`:
 import os
 
 DATABASE_URL = os.environ.get(
-    "DATABASE_URL", "postgresql://jobs:jobs@127.0.0.1:5432/jobs")
+    "DATABASE_URL", "postgresql://jobs:jobs@127.0.0.1:5433/jobs")
 # Tests point at a separate database on the same container so a test run can
 # never truncate real history.
 TEST_DATABASE_URL = os.environ.get(
-    "TEST_DATABASE_URL", "postgresql://jobs:jobs@127.0.0.1:5432/jobs_test")
+    "TEST_DATABASE_URL", "postgresql://jobs:jobs@127.0.0.1:5433/jobs_test")
 SCHEMA_PATH = PROJECT_ROOT / "schema.sql"
 ```
 
@@ -111,7 +111,7 @@ services:
     ports:
       # 127.0.0.1 only. Never 0.0.0.0 — this database holds the full job history
       # and there is no reason for anything off this machine to reach it.
-      - "127.0.0.1:5432:5432"
+      - "127.0.0.1:5433:5432"
     volumes:
       - jobsearch-pgdata:/var/lib/postgresql/data
     healthcheck:
@@ -2631,7 +2631,7 @@ digest.
 
 ## Where the data lives
 
-A local `postgres:16` container bound to `127.0.0.1:5432`, data in the
+A local `postgres:16` container bound to `127.0.0.1:5433`, data in the
 `jobsearch-pgdata` Docker volume. Three tables: `runs` (one row per invocation),
 `seen` (every job ever examined — this is what stops the agent paying to re-judge
 yesterday's postings), and `matches` (the full record plus the PDF bytes).

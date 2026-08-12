@@ -27,7 +27,7 @@ The Claude reasoning, the Canva render path and the truthfulness enforcement bou
 
 ## Decisions locked
 
-- **Postgres, in Docker, local only.** `postgres:16` bound to `127.0.0.1:5432`, data in a
+- **Postgres, in Docker, local only.** `postgres:16` bound to `127.0.0.1:5433`, data in a
   named volume. Chosen over Mongo because the data is relational (runs → jobs → matches),
   dedup is naturally a primary-key constraint, and `bytea` stores the PDFs without any
   large-object machinery.

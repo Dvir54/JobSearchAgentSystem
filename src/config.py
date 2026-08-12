@@ -1,3 +1,4 @@
+import os
 from pathlib import Path
 
 ROLE_QUERIES = [
@@ -105,3 +106,16 @@ LENGTH_BUDGET_RATIO = 1.05
 # breached it on a perfectly reasonable draft. 1.3 is ~4 lines, still inside the
 # box, and the post-edit height check remains the authority.
 SUMMARY_LENGTH_BUDGET_RATIO = 1.3
+
+# --- Local Postgres (Phase R3) ---
+# The database is the system of record: every job examined, every tailored PDF.
+# Bound to 127.0.0.1 by docker-compose.yml — it is never reachable off this machine.
+# Port 5433, not the Postgres default: a native PostgreSQL 18 service already
+# owns 5432 on this machine. See docker-compose.yml.
+DATABASE_URL = os.environ.get(
+    "DATABASE_URL", "postgresql://jobs:jobs@127.0.0.1:5433/jobs")
+# Tests point at a separate database on the same container so a test run can
+# never truncate real history.
+TEST_DATABASE_URL = os.environ.get(
+    "TEST_DATABASE_URL", "postgresql://jobs:jobs@127.0.0.1:5433/jobs_test")
+SCHEMA_PATH = PROJECT_ROOT / "schema.sql"
