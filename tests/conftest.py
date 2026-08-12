@@ -23,6 +23,21 @@ def _ensure_test_database():
                 cur.execute("CREATE DATABASE jobs_test")
 
 
+@pytest.fixture(autouse=True)
+def _offline_dedup(monkeypatch):
+    """Cross-run dedup defaults to "every job is new" for unit tests.
+
+    reduce_run_payload consults the database on every call. Without this, every
+    reducer test would need a live Postgres AND would depend on whatever the real
+    `seen` table happens to hold that day. Tests that actually exercise dedup
+    override this with their own monkeypatch.
+    """
+    import tooling
+    if hasattr(tooling, "_query_unseen_ids"):
+        monkeypatch.setattr(tooling, "_query_unseen_ids",
+                            lambda job_ids: {str(job_id) for job_id in job_ids})
+
+
 @pytest.fixture(scope="session")
 def _pg_available():
     try:

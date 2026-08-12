@@ -153,12 +153,19 @@ Follow this workflow exactly:
    run id until the run reports completion.
 
 3. The completed run's result arrives ALREADY REDUCED for you: postings are normalized,
-   deduped by id, and filtered down to Israel-located roles only. It is an object with
+   deduped by id, filtered down to Israel-located roles only, and stripped of every
+   posting you already judged on an earlier day. It is an object with
    `status` and `runId` (confirming which run this is), `window` (the posting-age window
-   this search used), `fetched`, `kept`, `dropped_duplicate`, `dropped_non_israel`, and
+   this search used), `fetched`, `kept`, `dropped_duplicate`, `dropped_non_israel`,
+   `dropped_seen`, and
    `jobs`. Receiving this object means the run has already reached COMPLETED — stop
    polling as soon as you see it. Do not try to re-filter or re-dedupe it, and do not
    look for a `filter_jobs` tool — there is none.
+
+   `dropped_seen` counts postings this agent already judged on an earlier day. They have
+   been removed for you and are NOT retrievable — do not ask for them and do not treat
+   their absence as an error. A large `dropped_seen` next to a small `kept` is the
+   normal, healthy shape of a daily run.
 
    `jobs` is a MANIFEST: one entry per kept posting carrying `id`, `title` and
    `company` ONLY. The descriptions are deliberately not in it — all of them together

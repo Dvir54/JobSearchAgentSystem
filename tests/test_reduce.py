@@ -48,7 +48,8 @@ def test_envelope_carries_status_and_run_id_for_polling_agent():
     payload = _run(output=[_raw("1", "Tel Aviv, Israel")], run_id="01XYZ")
     env = json.loads(reduce_run_payload(payload))
     assert set(env) == {"status", "runId", "window", "fetched", "kept",
-                         "dropped_duplicate", "dropped_non_israel", "jobs", "note"}
+                         "dropped_duplicate", "dropped_non_israel",
+                         "dropped_seen", "jobs", "note"}
     assert env["status"] == "COMPLETED"
     assert env["runId"] == "01XYZ"
 
@@ -193,3 +194,35 @@ def test_is_run_in_progress_never_raises_on_junk():
     assert is_run_in_progress(None) is False
     assert is_run_in_progress(json.dumps([1, 2, 3])) is False
     assert is_run_in_progress(json.dumps({"no": "status"})) is False
+
+
+def test_previously_seen_jobs_are_dropped_before_the_model_sees_them(monkeypatch):
+    monkeypatch.setattr(tooling, "_unseen_ids",
+                        lambda ids: {str(i) for i in ids if str(i) != "111"})
+    payload = _run(output=[_raw("111", "Tel Aviv, Israel"),
+                           _raw("222", "Haifa, Israel")])
+    envelope = json.loads(reduce_run_payload(payload))
+    assert [job["id"] for job in envelope["jobs"]] == ["222"]
+    assert envelope["kept"] == 1
+    assert envelope["dropped_seen"] == 1
+    assert tooling.last_run_stats()["dropped_seen"] == 1
+
+
+def test_a_seen_job_is_not_retrievable_by_get_job(monkeypatch):
+    # Dropped means gone, not hidden: if it stayed in _JOBS_BY_ID the agent could
+    # still pull the description and pay for it.
+    monkeypatch.setattr(tooling, "_unseen_ids", lambda ids: set())
+    reduce_run_payload(_run(output=[_raw("111", "Tel Aviv, Israel")]))
+    assert "error" in tooling.get_job("111")
+
+
+def test_dedup_failure_degrades_to_scoring_everything(monkeypatch, capsys):
+    def boom(ids):
+        raise RuntimeError("connection refused")
+    monkeypatch.setattr(tooling, "_query_unseen_ids", boom)
+    payload = _run(output=[_raw("111", "Tel Aviv, Israel")])
+    envelope = json.loads(reduce_run_payload(payload))
+    # Losing dedup costs money; losing the run costs the day. Keep the run.
+    assert [job["id"] for job in envelope["jobs"]] == ["111"]
+    assert envelope["dropped_seen"] == 0
+    assert "cross-run dedup unavailable" in capsys.readouterr().err

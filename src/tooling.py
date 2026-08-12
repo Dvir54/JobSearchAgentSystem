@@ -286,6 +286,38 @@ def is_run_in_progress(tool_response):
     return status is not None and status not in TERMINAL_STATUSES
 
 
+# Filled by reduce_run_payload, read by cli.run to close the run row. The counts
+# come from the reducer rather than from the agent's summary: the model can be
+# wrong about what it did, this cannot.
+_RUN_STATS = {"fetched": 0, "kept": 0, "dropped_duplicate": 0,
+              "dropped_non_israel": 0, "dropped_seen": 0}
+
+
+def last_run_stats():
+    return dict(_RUN_STATS)
+
+
+def _query_unseen_ids(job_ids):
+    """Isolated so tests can make the database fail without one running."""
+    import db
+    return db.filter_unseen(job_ids)
+
+
+def _unseen_ids(job_ids):
+    """Job ids never examined on a previous run.
+
+    Degrades to "everything is new" when the database cannot be reached. Losing
+    dedup costs a day of re-scoring; failing here would cost the whole day's
+    postings, and the 24h window means they never come back.
+    """
+    try:
+        return _query_unseen_ids(job_ids)
+    except Exception as exc:                  # noqa: BLE001 - degrade, never abort
+        print(f"[reduce] WARNING: cross-run dedup unavailable ({exc!r}) — every "
+              f"job will be re-scored and re-tailored this run", file=sys.stderr)
+        return {str(job_id) for job_id in job_ids}
+
+
 def reduce_run_payload(tool_response):
     """Reduce a `monid_get_run` payload to the jobs the agent actually needs.
 
@@ -332,17 +364,29 @@ def reduce_run_payload(tool_response):
     # Everything below — the reducer, the window lookup, and serialisation —
     # must degrade to pass-through on ANY failure, never escape to the model.
     try:
-        jobs = clean_jobs(items)
+        israeli = clean_jobs(items)
         fetched = len(items)
         unique = len({str(i.get("id")) for i in items if isinstance(i, dict)})
-        kept = len(jobs)
         dropped_duplicate = fetched - unique
-        dropped_non_israel = unique - kept
+        dropped_non_israel = unique - len(israeli)
 
+        # Cross-run dedup. Runs here, in code, before any posting reaches the
+        # model — so a job examined yesterday costs neither tokens nor judgement.
+        unseen = _unseen_ids([job["id"] for job in israeli])
+        jobs = [job for job in israeli if str(job["id"]) in unseen]
+        dropped_seen = len(israeli) - len(jobs)
+        kept = len(jobs)
+
+        # Stays keyed on `items`, not on the post-Israel list: the alarm that
+        # matters is "we fetched postings and kept none", whatever dropped them.
+        # Narrowing it to the Israeli subset would silence exactly the case it
+        # was written for — an upstream schema change in the location field.
         if items and not jobs:
             print(f"[reduce] WARNING: all {fetched} fetched postings were filtered "
-                  f"out (kept=0, dropped_non_israel={dropped_non_israel}) — likely "
-                  f"cause: upstream schema change in the 'location' field", file=sys.stderr)
+                  f"out (kept=0, dropped_non_israel={dropped_non_israel}, "
+                  f"dropped_seen={dropped_seen}) — likely causes: upstream schema "
+                  f"change in the 'location' field, or every posting already seen",
+                  file=sys.stderr)
 
         # Descriptions stay here; only the manifest crosses into the tool result.
         _JOBS_BY_ID.clear()
@@ -357,11 +401,16 @@ def reduce_run_payload(tool_response):
             "kept": kept,
             "dropped_duplicate": dropped_duplicate,
             "dropped_non_israel": dropped_non_israel,
+            "dropped_seen": dropped_seen,
             "jobs": [_manifest_entry(job) for job in jobs],
             "note": ("`jobs` lists every kept posting by id/title/company only. "
                      "Call `get_job` with an id for that posting's description, "
                      "url and location."),
         }
+        _RUN_STATS.update(fetched=fetched, kept=kept,
+                          dropped_duplicate=dropped_duplicate,
+                          dropped_non_israel=dropped_non_israel,
+                          dropped_seen=dropped_seen)
         text = json.dumps(envelope, ensure_ascii=False)
 
         # Should be unreachable — the manifest is ~97 bytes a job, so this needs
@@ -389,6 +438,7 @@ def reduce_run_payload(tool_response):
           f"fetched={fetched} kept={kept} "
           f"dropped_duplicate={dropped_duplicate} "
           f"dropped_non_israel={dropped_non_israel} "
+          f"dropped_seen={dropped_seen} "
           f"envelope={len(text)}B/{config.INLINE_RESULT_LIMIT_BYTES}B "
           f"descriptions_held={len(_JOBS_BY_ID)}", file=sys.stderr)
     return text
