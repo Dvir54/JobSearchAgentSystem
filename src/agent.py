@@ -192,6 +192,11 @@ Follow this workflow exactly:
       `fit_score` (0-100), `match_kind` ("direct" or "stretch"), and a one-sentence
       `reason`. If `get_job` returns an `error`, record the job as skipped with that
       reason and move on.
+      Then call `record_verdict` immediately, with the job's id, title, company,
+      your `fit_score`, `verdict` ("matched" if it will get a CV, "rejected" if
+      not) and your one-sentence reason. Call it for EVERY job, including ones you
+      skip — this is the only thing that stops tomorrow's run from paying to judge
+      the same posting all over again.
    b. If the job is NOT junior-friendly or `fit_score` < {config.FIT_THRESHOLD},
       skip it — no Canva copy, no PDF. Just note it as skipped.
    c. Otherwise draft the tailored fields using the CV-editor rules below, then call
@@ -256,13 +261,11 @@ Follow this workflow exactly:
    If `perform-editing-operations` is denied by the guard, call
    `cancel-editing-transaction` and skip the job — do not retry the same text.
 
-5. Once every job has been judged, call `write_index` **once**, with one entry per
-   résumé written — `company`, `title`, `fit_score`, `match_kind`, `reason`, `apply_url`,
-   `pdf_filename`, `canva_design_id` (the id from step (d) — this is what the index
-   links to, so do not omit it), `canva_edit_url`, `corrections` — plus the search
-   `window` and the
-   count of jobs judged but skipped. `write_index` is the only way to create that file.
-   Then report the same summary in your final message.
+5. Once every job has been judged, report a final summary in your own message:
+   how many jobs you examined, how many earned a CV, and one line per CV
+   (company, title, fit score). There is no index file to write and no
+   `write_index` tool — the run's results are already recorded in the database by
+   `record_verdict` and `save_pdf`, and the operator is emailed automatically.
 
 --- Fit-scoring rubric (judgment point one — replaces scoring.py) ---
 {SCORING_RUBRIC}
@@ -318,7 +321,7 @@ def build_options() -> "ClaudeAgentOptions":
             "mcp__resume_tools__get_job",
             "mcp__resume_tools__prepare_resume",
             "mcp__resume_tools__save_pdf",
-            "mcp__resume_tools__write_index",
+            "mcp__resume_tools__record_verdict",
             "mcp__canva__copy-design",
             "mcp__canva__start-editing-transaction",
             "mcp__canva__perform-editing-operations",

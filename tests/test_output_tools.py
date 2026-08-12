@@ -58,15 +58,34 @@ def test_save_pdf_rejects_an_empty_download(tmp_path, monkeypatch):
     assert not run_directory.exists() or not any(run_directory.iterdir())
 
 
-def test_write_index_writes_the_rendered_markdown(tmp_path, monkeypatch):
-    monkeypatch.setattr(tooling.config, "OUTPUT_DIR", tmp_path)
-    entries = [{"company": "Alignerr", "title": "SW Engineer", "fit_score": 88,
-                "match_kind": "direct", "reason": "Good overlap.",
-                "apply_url": "https://example.com/j", "pdf_filename": "a.pdf",
-                "canva_edit_url": "https://canva.com/d/x", "corrections": []}]
-    out = tooling.write_index(entries, window="24h", skipped_count=16,
-                              today="2026-07-30")
-    written = pathlib.Path(out["written"])
-    assert written.name == "index.md"
-    body = written.read_text(encoding="utf-8")
-    assert "Alignerr" in body and "https://example.com/j" in body and "16" in body
+def test_record_verdict_writes_the_row_and_counts_it(pg, monkeypatch):
+    import db
+    run_id = db.start_run("24h", pg)
+    monkeypatch.setattr(tooling, "_db_conn", lambda: pg)
+    tooling.set_run_id(run_id)
+    result = tooling.record_verdict("111", "Backend Dev", "Acme", 82, "matched",
+                                    "Python in the core stack")
+    assert result == {"recorded": True}
+    assert tooling.examined_count() == 1
+    with pg.cursor() as cur:
+        cur.execute("SELECT company, verdict FROM seen WHERE job_id = '111'")
+        assert cur.fetchone() == ("Acme", "matched")
+
+
+def test_record_verdict_rejects_an_unknown_verdict(pg, monkeypatch):
+    import db
+    monkeypatch.setattr(tooling, "_db_conn", lambda: pg)
+    tooling.set_run_id(db.start_run("24h", pg))
+    result = tooling.record_verdict("111", "T", "C", 82, "maybe", "r")
+    assert "error" in result
+    assert tooling.examined_count() == 0
+
+
+def test_record_verdict_returns_an_error_rather_than_raising(monkeypatch):
+    def boom():
+        raise RuntimeError("connection refused")
+    monkeypatch.setattr(tooling, "_db_conn", boom)
+    tooling.set_run_id(1)
+    # One unrecorded verdict must cost one job, never the run.
+    assert "error" in tooling.record_verdict("111", "T", "C", 82, "matched", "r")
+    assert tooling.examined_count() == 0

@@ -72,6 +72,61 @@ def clean_jobs(raw_items):
 # piece it is working on.
 _JOBS_BY_ID = {}
 
+# Run-scoped state. The run id is set by cli.run before the session starts and is
+# deliberately NOT a tool argument: the model has no reason to know it, and a
+# wrong value would file a CV under someone else's run.
+_RUN_ID = None
+_EXAMINED = 0
+_MATCHED = 0
+
+VERDICTS = ("matched", "rejected")
+
+
+def set_run_id(run_id):
+    global _RUN_ID, _EXAMINED, _MATCHED
+    _RUN_ID = run_id
+    _EXAMINED = 0
+    _MATCHED = 0
+
+
+def current_run_id():
+    return _RUN_ID
+
+
+def examined_count():
+    return _EXAMINED
+
+
+def matched_count():
+    return _MATCHED
+
+
+def _db_conn():
+    """Isolated so tests can substitute a connection or make it fail."""
+    import db
+    return db.session()
+
+
+def record_verdict(job_id, title, company, fit_score, verdict, reason):
+    """Remember that this job was judged, kept or not.
+
+    This is what makes tomorrow skip it. Returns an error rather than raising:
+    one unrecorded verdict must cost one job, never the run.
+    """
+    global _EXAMINED
+    if verdict not in VERDICTS:
+        return {"error": f"verdict must be one of {VERDICTS}, got {verdict!r}"}
+    try:
+        import db
+        db.record_verdict(job_id, _RUN_ID, title, company, fit_score, verdict,
+                          reason, conn=_db_conn())
+    except Exception as exc:                  # noqa: BLE001 - report, never abort
+        print(f"[record_verdict] {job_id}: FAILED ({exc!r}) — this job will be "
+              f"re-scored tomorrow", file=sys.stderr)
+        return {"error": str(exc)}
+    _EXAMINED += 1
+    return {"recorded": True}
+
 
 def _manifest_entry(job):
     """The only fields that cross into a tool result for every job at once."""
