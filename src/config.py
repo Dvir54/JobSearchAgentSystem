@@ -1,4 +1,13 @@
+import os
 from pathlib import Path
+
+from dotenv import load_dotenv
+
+# Loaded HERE, at import, because the settings below snapshot os.environ at import
+# time. Calling load_dotenv() later — from inside a CLI command, as the entry
+# points used to — is too late: config has already captured empty strings, and
+# `jobs setup` then reports credentials missing that are sitting in .env.
+load_dotenv()
 
 ROLE_QUERIES = [
     "software developer",
@@ -18,10 +27,11 @@ EXPERIENCE_SECTION = "Work Experience"
 PROJECTS_SECTION = "Projects"
 TAILORED_SECTIONS = (SUMMARY_SECTION, SKILLS_SECTION, EXPERIENCE_SECTION, PROJECTS_SECTION)
 
-# The repo root — one level up from src/, where data and output live.
+# The repo root — one level up from src/, where the base CV and schema live.
+# There is no OUTPUT_DIR: every tailored CV goes into Postgres (see db.py), and
+# `jobs pdf` writes one back out on demand.
 PROJECT_ROOT = Path(__file__).parent.parent
 BASE_CV_PATH = PROJECT_ROOT / "base_cv.md"
-OUTPUT_DIR = PROJECT_ROOT / "output"
 
 # --- Monid job source ---
 MONID_MCP_URL = "https://mcp.monid.ai/v1"
@@ -105,3 +115,26 @@ LENGTH_BUDGET_RATIO = 1.05
 # breached it on a perfectly reasonable draft. 1.3 is ~4 lines, still inside the
 # box, and the post-edit height check remains the authority.
 SUMMARY_LENGTH_BUDGET_RATIO = 1.3
+
+# --- Local Postgres (Phase R3) ---
+# The database is the system of record: every job examined, every tailored PDF.
+# Bound to 127.0.0.1 by docker-compose.yml — it is never reachable off this machine.
+# Port 5433, not the Postgres default: a native PostgreSQL 18 service already
+# owns 5432 on this machine. See docker-compose.yml.
+DATABASE_URL = os.environ.get(
+    "DATABASE_URL", "postgresql://jobs:jobs@127.0.0.1:5433/jobs")
+# Tests point at a separate database on the same container so a test run can
+# never truncate real history.
+TEST_DATABASE_URL = os.environ.get(
+    "TEST_DATABASE_URL", "postgresql://jobs:jobs@127.0.0.1:5433/jobs_test")
+SCHEMA_PATH = PROJECT_ROOT / "schema.sql"
+
+# --- Daily email (Phase R3) ---
+SMTP_HOST = "smtp.gmail.com"
+SMTP_PORT = 465                      # implicit TLS; no STARTTLS negotiation
+GMAIL_ADDRESS = os.environ.get("GMAIL_ADDRESS", "")
+GMAIL_APP_PASSWORD = os.environ.get("GMAIL_APP_PASSWORD", "")
+
+# --- Scheduling (Phase R3) ---
+TASK_NAME = "JobSearchAgent"
+SCHEDULE_TIME = "09:00:00"

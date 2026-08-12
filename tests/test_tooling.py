@@ -237,7 +237,9 @@ def test_prepare_rejection_returns_no_operations():
 
 
 def test_prepare_writes_no_file():
-    before = set(config.OUTPUT_DIR.iterdir()) if config.OUTPUT_DIR.exists() else set()
+    # prepare_resume computes the Canva edit plan and persists nothing. Checked
+    # against the repo root now that there is no output directory at all: the
+    # only writer is save_pdf, and it writes to Postgres.
+    before = set(config.PROJECT_ROOT.iterdir())
     prepare_resume(_job(), _score(), _tailored_ok())
-    after = set(config.OUTPUT_DIR.iterdir()) if config.OUTPUT_DIR.exists() else set()
-    assert before == after
+    assert set(config.PROJECT_ROOT.iterdir()) == before

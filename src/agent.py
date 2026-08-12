@@ -138,6 +138,14 @@ _SEARCH_RECIPE_BODY = {
     "sortBy": "date",
 }
 
+# The endpoint takes the search fields inside a `body` envelope. The prompt used to
+# hand the agent the bare body as `input`, so monid_run rejected the first call of
+# every run and the agent had to improvise the wrapper — which it did correctly, but
+# improvisation is exactly what an unattended run should never depend on.
+# tooling._window() has always read run["input"]["body"], which is the same fact
+# stated from the other end.
+_SEARCH_RECIPE = {"body": _SEARCH_RECIPE_BODY}
+
 WORKFLOW = f"""You are running one autonomous job-search-and-tailoring session end to end.
 Follow this workflow exactly:
 
@@ -148,17 +156,26 @@ Follow this workflow exactly:
 2. Call `monid_run` with EXACTLY this pinned search recipe (do not change any field):
    - provider: {config.MONID_PROVIDER!r}
    - endpoint: {config.MONID_ENDPOINT!r}
-   - input: {_SEARCH_RECIPE_BODY!r}
+   - input: {_SEARCH_RECIPE!r}
+   The search fields go inside `body` — that envelope is what the endpoint's schema
+   expects, and a flat input is rejected. Send it exactly as written above.
    `monid_run` is asynchronous — after starting it, poll `monid_get_run` with the returned
    run id until the run reports completion.
 
 3. The completed run's result arrives ALREADY REDUCED for you: postings are normalized,
-   deduped by id, and filtered down to Israel-located roles only. It is an object with
+   deduped by id, filtered down to Israel-located roles only, and stripped of every
+   posting you already judged on an earlier day. It is an object with
    `status` and `runId` (confirming which run this is), `window` (the posting-age window
-   this search used), `fetched`, `kept`, `dropped_duplicate`, `dropped_non_israel`, and
+   this search used), `fetched`, `kept`, `dropped_duplicate`, `dropped_non_israel`,
+   `dropped_seen`, and
    `jobs`. Receiving this object means the run has already reached COMPLETED — stop
    polling as soon as you see it. Do not try to re-filter or re-dedupe it, and do not
    look for a `filter_jobs` tool — there is none.
+
+   `dropped_seen` counts postings this agent already judged on an earlier day. They have
+   been removed for you and are NOT retrievable — do not ask for them and do not treat
+   their absence as an error. A large `dropped_seen` next to a small `kept` is the
+   normal, healthy shape of a daily run.
 
    `jobs` is a MANIFEST: one entry per kept posting carrying `id`, `title` and
    `company` ONLY. The descriptions are deliberately not in it — all of them together
@@ -185,6 +202,11 @@ Follow this workflow exactly:
       `fit_score` (0-100), `match_kind` ("direct" or "stretch"), and a one-sentence
       `reason`. If `get_job` returns an `error`, record the job as skipped with that
       reason and move on.
+      Then call `record_verdict` immediately, with the job's id, title, company,
+      your `fit_score`, `verdict` ("matched" if it will get a CV, "rejected" if
+      not) and your one-sentence reason. Call it for EVERY job, including ones you
+      skip — this is the only thing that stops tomorrow's run from paying to judge
+      the same posting all over again.
    b. If the job is NOT junior-friendly or `fit_score` < {config.FIT_THRESHOLD},
       skip it — no Canva copy, no PDF. Just note it as skipped.
    c. Otherwise draft the tailored fields using the CV-editor rules below, then call
@@ -242,20 +264,20 @@ Follow this workflow exactly:
    i. Call `get-export-formats` for this design first — `export-design` requires it and
       will not accept a guessed format. Then call `export-design` for PDF and poll until
       it completes.
-   j. Call `save_pdf` with the export URL, the company, the title and the job id.
-      You have no other way to write a file.
+   j. Call `save_pdf` with the export URL, the job id, the design id from step (d)
+      and that design's edit URL. It downloads the PDF and stores it in the
+      database — you have no other way to persist it. There is no output folder
+      and no filename to choose.
    k. Call `move-item-to-folder` to file the design in this run's folder.
 
    If `perform-editing-operations` is denied by the guard, call
    `cancel-editing-transaction` and skip the job — do not retry the same text.
 
-5. Once every job has been judged, call `write_index` **once**, with one entry per
-   résumé written — `company`, `title`, `fit_score`, `match_kind`, `reason`, `apply_url`,
-   `pdf_filename`, `canva_design_id` (the id from step (d) — this is what the index
-   links to, so do not omit it), `canva_edit_url`, `corrections` — plus the search
-   `window` and the
-   count of jobs judged but skipped. `write_index` is the only way to create that file.
-   Then report the same summary in your final message.
+5. Once every job has been judged, report a final summary in your own message:
+   how many jobs you examined, how many earned a CV, and one line per CV
+   (company, title, fit score). There is no index file to write and no
+   `write_index` tool — the run's results are already recorded in the database by
+   `record_verdict` and `save_pdf`, and the operator is emailed automatically.
 
 --- Fit-scoring rubric (judgment point one — replaces scoring.py) ---
 {SCORING_RUBRIC}
@@ -311,7 +333,7 @@ def build_options() -> "ClaudeAgentOptions":
             "mcp__resume_tools__get_job",
             "mcp__resume_tools__prepare_resume",
             "mcp__resume_tools__save_pdf",
-            "mcp__resume_tools__write_index",
+            "mcp__resume_tools__record_verdict",
             "mcp__canva__copy-design",
             "mcp__canva__start-editing-transaction",
             "mcp__canva__perform-editing-operations",
@@ -340,9 +362,10 @@ def build_options() -> "ClaudeAgentOptions":
         # Sized against the worst realistic run, not the happy path: the per-job
         # Canva sequence (a-k) is ~12 turns, and each overflow redraft adds ~4 more,
         # twice per job. Ten qualifying jobs that mostly overflow lands near 210 —
-        # and hitting the cap would cut the run off before `write_index`, losing the
-        # index and the summary while leaving the PDFs orphaned on disk. The
-        # `disallowed_tools` cage is what bounds a runaway; this is just headroom.
+        # and hitting the cap cuts the run off mid-loop, leaving the remaining jobs
+        # unjudged and unrecorded, so tomorrow pays to judge them again. Rows
+        # already written do survive. The `disallowed_tools` cage is what bounds a
+        # runaway; this is just headroom.
         max_turns=300,
         # The Monid harvestapi result for a 'week' window (100+ jobs with full
         # text+HTML descriptions) can exceed the SDK's 1MB default message buffer;
@@ -383,10 +406,15 @@ GOAL_PROMPT = (
 )
 
 
-async def main() -> int:
+async def run_session() -> dict:
+    """Drive one autonomous session. Returns what happened; decides nothing.
+
+    The run row, the digest and the exit code belong to cli.py — this function's
+    only job is to run the agent and report what came back.
+    """
     load_dotenv()
 
-    final_summary = None
+    final_summary, cost, is_error = None, None, False
     async for message in query(prompt=GOAL_PROMPT, options=build_options()):
         if isinstance(message, AssistantMessage):
             for block in message.content:
@@ -398,13 +426,18 @@ async def main() -> int:
                     print(block.text)
         elif isinstance(message, ResultMessage):
             final_summary = message.result
+            cost = message.total_cost_usd
+            is_error = message.is_error
             print(f"\n[session finished] subtype={message.subtype} "
                   f"is_error={message.is_error} cost=${message.total_cost_usd}")
 
     print("\n=== Final summary ===")
     print(final_summary or "(no final summary returned)")
-    return 0
+    return {"summary": final_summary, "cost": cost, "is_error": is_error}
 
 
 if __name__ == "__main__":
-    sys.exit(asyncio.run(main()))
+    # Kept so `python src/agent.py` still drives a bare session for debugging.
+    # The supported entry point is `jobs run`, which also owns the run row, the
+    # digest, and the exit code.
+    asyncio.run(run_session())

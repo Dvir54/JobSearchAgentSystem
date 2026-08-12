@@ -1,3 +1,32 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "job-search-agent"
+version = "0.3.0"
+requires-python = ">=3.11"
+description = "Daily job search, CV tailoring, and digest email."
+dependencies = [
+    "pydantic>=2.7",
+    "python-dotenv>=1.0",
+    "claude-agent-sdk>=0.1",
+    "psycopg[binary]>=3.1",
+]
+
+[project.scripts]
+# The scheduled task invokes this executable by absolute path — a
+# non-interactive session does not inherit the interactive PATH.
+jobs = "cli:main"
+
+[tool.setuptools]
+# Flat modules under src/, not a package: the app and the tests both import
+# them by bare name (`import config`), which is what pythonpath below mirrors.
+package-dir = {"" = "src"}
+py-modules = ["agent", "canva", "cli", "config", "db", "hooks", "jobs",
+              "mailer", "render", "resume", "scheduling", "tailoring",
+              "tooling", "tools"]
+
 [tool.pytest.ini_options]
 # Source modules live in src/; put it on the path so tests import them
 # with flat names (e.g. `from jobs import ...`), matching how the app runs.

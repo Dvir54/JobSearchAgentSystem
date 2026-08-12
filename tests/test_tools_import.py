@@ -51,6 +51,14 @@ def test_prepare_resume_tool_replaced_write_resume(monkeypatch):
     assert not hasattr(tools, "write_resume")
 
 
+def test_record_verdict_tool_replaced_write_index():
+    # The run's record is now rows in `seen` and `matches`, not an index.md.
+    # record_verdict is also what feeds cross-run dedup, so it is not optional.
+    import tools
+    assert hasattr(tools, "record_verdict")
+    assert not hasattr(tools, "write_index")
+
+
 def test_agent_registers_canva_mcp_and_the_write_guard(monkeypatch):
     monkeypatch.setenv("MONID_API_KEY", "dummy")
     import agent
@@ -61,7 +69,8 @@ def test_agent_registers_canva_mcp_and_the_write_guard(monkeypatch):
     assert "mcp__resume_tools__prepare_resume" in opts.allowed_tools
 
     assert "mcp__resume_tools__save_pdf" in opts.allowed_tools
-    assert "mcp__resume_tools__write_index" in opts.allowed_tools
+    assert "mcp__resume_tools__record_verdict" in opts.allowed_tools
+    assert "mcp__resume_tools__write_index" not in opts.allowed_tools
 
     pre = opts.hooks["PreToolUse"]
     assert any(m.matcher == "mcp__canva__perform-editing-operations" for m in pre)
@@ -82,6 +91,20 @@ def test_agent_still_denies_the_builtin_tools(monkeypatch):
     monkeypatch.setenv("MONID_API_KEY", "dummy")
     import agent
     opts = agent.build_options()
-    # save_pdf/write_index exist precisely because these stay denied
+    # save_pdf/record_verdict exist precisely because these stay denied
     for denied in ("Bash", "Read", "Write", "WebFetch", "Agent"):
         assert denied in opts.disallowed_tools
+
+
+def test_the_pinned_search_recipe_carries_the_body_envelope():
+    """The endpoint takes the search fields inside `body`. The prompt used to hand
+    over the bare body as `input`, so monid_run rejected the first call of every
+    run and the agent improvised the wrapper. tooling._window() reads
+    run["input"]["body"], which is the same fact from the other end."""
+    import agent
+    import tooling
+    assert agent._SEARCH_RECIPE == {"body": agent._SEARCH_RECIPE_BODY}
+    assert "'body'" in agent.WORKFLOW
+    # The two ends must agree: what we send is what the reducer reads back.
+    echoed = {"input": agent._SEARCH_RECIPE}
+    assert tooling._window(echoed) == agent._SEARCH_RECIPE_BODY["postedLimit"]

@@ -112,22 +112,31 @@ async def get_job(args: dict) -> dict:
     return _json_result(tooling.get_job(args["job_id"]))
 
 
-@tool("save_pdf", "Download an exported Canva PDF into this run's output directory.",
-      {"export_url": str, "company": str, "title": str, "job_id": str})
+@tool("save_pdf", "Download an exported Canva PDF and store it in the database "
+      "against this job. Pass the job's id — the posting's company, title, URL "
+      "and location are already held for you.",
+      {"export_url": str, "job_id": str, "canva_design_id": str,
+       "canva_url": str})
 async def save_pdf(args: dict) -> dict:
-    return _json_result(tooling.save_pdf(args["export_url"], args["company"],
-                                         args["title"], args["job_id"]))
+    return _json_result(tooling.save_pdf(args["export_url"], args["job_id"],
+                                         args["canva_design_id"],
+                                         args["canva_url"]))
 
 
-@tool("write_index", "Write this run's index.md describing every résumé that was created.",
-      {"entries": list, "window": str, "skipped_count": int})
-async def write_index(args: dict) -> dict:
-    return _json_result(tooling.write_index(args["entries"], args["window"],
-                                            args["skipped_count"]))
+@tool("record_verdict", "Record your judgement of one job — kept or skipped. Call "
+      "this for EVERY job you examine, immediately after scoring it and before "
+      "doing anything else with it. This is what stops the job being re-scored "
+      "tomorrow.",
+      {"job_id": str, "title": str, "company": str, "fit_score": int,
+       "verdict": str, "reason": str})
+async def record_verdict(args: dict) -> dict:
+    return _json_result(tooling.record_verdict(
+        args["job_id"], args["title"], args["company"], args["fit_score"],
+        args["verdict"], args["reason"]))
 
 
 resume_tools = create_sdk_mcp_server(
     name="resume_tools",
     version="1.0.0",
-    tools=[get_resume, get_job, prepare_resume, save_pdf, write_index],
+    tools=[get_resume, get_job, prepare_resume, save_pdf, record_verdict],
 )

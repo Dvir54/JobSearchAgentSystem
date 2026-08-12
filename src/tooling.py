@@ -72,6 +72,61 @@ def clean_jobs(raw_items):
 # piece it is working on.
 _JOBS_BY_ID = {}
 
+# Run-scoped state. The run id is set by cli.run before the session starts and is
+# deliberately NOT a tool argument: the model has no reason to know it, and a
+# wrong value would file a CV under someone else's run.
+_RUN_ID = None
+_EXAMINED = 0
+_MATCHED = 0
+
+VERDICTS = ("matched", "rejected")
+
+
+def set_run_id(run_id):
+    global _RUN_ID, _EXAMINED, _MATCHED
+    _RUN_ID = run_id
+    _EXAMINED = 0
+    _MATCHED = 0
+
+
+def current_run_id():
+    return _RUN_ID
+
+
+def examined_count():
+    return _EXAMINED
+
+
+def matched_count():
+    return _MATCHED
+
+
+def _db_conn():
+    """Isolated so tests can substitute a connection or make it fail."""
+    import db
+    return db.session()
+
+
+def record_verdict(job_id, title, company, fit_score, verdict, reason):
+    """Remember that this job was judged, kept or not.
+
+    This is what makes tomorrow skip it. Returns an error rather than raising:
+    one unrecorded verdict must cost one job, never the run.
+    """
+    global _EXAMINED
+    if verdict not in VERDICTS:
+        return {"error": f"verdict must be one of {VERDICTS}, got {verdict!r}"}
+    try:
+        import db
+        db.record_verdict(job_id, _RUN_ID, title, company, fit_score, verdict,
+                          reason, conn=_db_conn())
+    except Exception as exc:                  # noqa: BLE001 - report, never abort
+        print(f"[record_verdict] {job_id}: FAILED ({exc!r}) — this job will be "
+              f"re-scored tomorrow", file=sys.stderr)
+        return {"error": str(exc)}
+    _EXAMINED += 1
+    return {"recorded": True}
+
 
 def _manifest_entry(job):
     """The only fields that cross into a tool result for every job at once."""
@@ -286,6 +341,38 @@ def is_run_in_progress(tool_response):
     return status is not None and status not in TERMINAL_STATUSES
 
 
+# Filled by reduce_run_payload, read by cli.run to close the run row. The counts
+# come from the reducer rather than from the agent's summary: the model can be
+# wrong about what it did, this cannot.
+_RUN_STATS = {"fetched": 0, "kept": 0, "dropped_duplicate": 0,
+              "dropped_non_israel": 0, "dropped_seen": 0}
+
+
+def last_run_stats():
+    return dict(_RUN_STATS)
+
+
+def _query_unseen_ids(job_ids):
+    """Isolated so tests can make the database fail without one running."""
+    import db
+    return db.filter_unseen(job_ids)
+
+
+def _unseen_ids(job_ids):
+    """Job ids never examined on a previous run.
+
+    Degrades to "everything is new" when the database cannot be reached. Losing
+    dedup costs a day of re-scoring; failing here would cost the whole day's
+    postings, and the 24h window means they never come back.
+    """
+    try:
+        return _query_unseen_ids(job_ids)
+    except Exception as exc:                  # noqa: BLE001 - degrade, never abort
+        print(f"[reduce] WARNING: cross-run dedup unavailable ({exc!r}) — every "
+              f"job will be re-scored and re-tailored this run", file=sys.stderr)
+        return {str(job_id) for job_id in job_ids}
+
+
 def reduce_run_payload(tool_response):
     """Reduce a `monid_get_run` payload to the jobs the agent actually needs.
 
@@ -332,17 +419,29 @@ def reduce_run_payload(tool_response):
     # Everything below — the reducer, the window lookup, and serialisation —
     # must degrade to pass-through on ANY failure, never escape to the model.
     try:
-        jobs = clean_jobs(items)
+        israeli = clean_jobs(items)
         fetched = len(items)
         unique = len({str(i.get("id")) for i in items if isinstance(i, dict)})
-        kept = len(jobs)
         dropped_duplicate = fetched - unique
-        dropped_non_israel = unique - kept
+        dropped_non_israel = unique - len(israeli)
 
+        # Cross-run dedup. Runs here, in code, before any posting reaches the
+        # model — so a job examined yesterday costs neither tokens nor judgement.
+        unseen = _unseen_ids([job["id"] for job in israeli])
+        jobs = [job for job in israeli if str(job["id"]) in unseen]
+        dropped_seen = len(israeli) - len(jobs)
+        kept = len(jobs)
+
+        # Stays keyed on `items`, not on the post-Israel list: the alarm that
+        # matters is "we fetched postings and kept none", whatever dropped them.
+        # Narrowing it to the Israeli subset would silence exactly the case it
+        # was written for — an upstream schema change in the location field.
         if items and not jobs:
             print(f"[reduce] WARNING: all {fetched} fetched postings were filtered "
-                  f"out (kept=0, dropped_non_israel={dropped_non_israel}) — likely "
-                  f"cause: upstream schema change in the 'location' field", file=sys.stderr)
+                  f"out (kept=0, dropped_non_israel={dropped_non_israel}, "
+                  f"dropped_seen={dropped_seen}) — likely causes: upstream schema "
+                  f"change in the 'location' field, or every posting already seen",
+                  file=sys.stderr)
 
         # Descriptions stay here; only the manifest crosses into the tool result.
         _JOBS_BY_ID.clear()
@@ -357,11 +456,16 @@ def reduce_run_payload(tool_response):
             "kept": kept,
             "dropped_duplicate": dropped_duplicate,
             "dropped_non_israel": dropped_non_israel,
+            "dropped_seen": dropped_seen,
             "jobs": [_manifest_entry(job) for job in jobs],
             "note": ("`jobs` lists every kept posting by id/title/company only. "
                      "Call `get_job` with an id for that posting's description, "
                      "url and location."),
         }
+        _RUN_STATS.update(fetched=fetched, kept=kept,
+                          dropped_duplicate=dropped_duplicate,
+                          dropped_non_israel=dropped_non_israel,
+                          dropped_seen=dropped_seen)
         text = json.dumps(envelope, ensure_ascii=False)
 
         # Should be unreachable — the manifest is ~97 bytes a job, so this needs
@@ -389,6 +493,7 @@ def reduce_run_payload(tool_response):
           f"fetched={fetched} kept={kept} "
           f"dropped_duplicate={dropped_duplicate} "
           f"dropped_non_israel={dropped_non_israel} "
+          f"dropped_seen={dropped_seen} "
           f"envelope={len(text)}B/{config.INLINE_RESULT_LIMIT_BYTES}B "
           f"descriptions_held={len(_JOBS_BY_ID)}", file=sys.stderr)
     return text
@@ -401,24 +506,29 @@ def _fetch_bytes(url):
         return response.read()
 
 
-def run_dir(today=None):
-    """output/<YYYY-MM-DD>/ for this run, created on demand."""
-    from datetime import date
-    stamp = today or date.today().isoformat()
-    path = config.OUTPUT_DIR / stamp
-    path.mkdir(parents=True, exist_ok=True)
-    return path
 
-
-def save_pdf(export_url, company, title, job_id, today=None):
-    """Download an exported Canva PDF into this run's output directory.
+def save_pdf(export_url, job_id, canva_design_id, canva_url):
+    """Download an exported Canva PDF and store it in the database.
 
     The agent has no Bash/Read/Write/WebFetch - those are denied so a failure
     cannot degrade into hand-parsing - so downloading has to happen here.
+
+    Takes the job by id, not by company/title: the full posting is already held
+    in `_JOBS_BY_ID`, so location, apply URL and posted date come from what the
+    source actually said rather than from the model retyping it.
+
     Returns rather than raises: one job's failed download must not end the run.
     """
+    global _MATCHED
     from render import pdf_filename
-    filename = pdf_filename(company, title, job_id)
+    job = _JOBS_BY_ID.get(str(job_id))
+    if job is None:
+        message = (f"no job with id {job_id!r} in this run; cannot store a CV "
+                   f"for a posting that was never listed")
+        print(f"[save_pdf] {message}", file=sys.stderr)
+        return {"saved": None, "error": message, "filename": ""}
+
+    filename = pdf_filename(job["company"], job["title"], job["id"])
     try:
         payload = _fetch_bytes(export_url)
     except Exception as exc:                     # noqa: BLE001 - report, never abort the run
@@ -426,21 +536,26 @@ def save_pdf(export_url, company, title, job_id, today=None):
         return {"saved": None, "error": str(exc), "filename": filename}
 
     if not payload:
-        message = "download was empty; nothing written"
+        message = "download was empty; nothing stored"
         print(f"[save_pdf] {filename}: {message}", file=sys.stderr)
         return {"saved": None, "error": message, "filename": filename}
 
-    path = run_dir(today) / filename
-    path.write_bytes(payload)
-    print(f"[save_pdf] wrote {path} ({len(payload):,} bytes)", file=sys.stderr)
-    return {"saved": str(path), "error": "", "filename": filename}
+    try:
+        import db
+        db.insert_match(job["id"], _RUN_ID, title=job["title"],
+                        company=job["company"], location=job.get("location"),
+                        apply_url=job.get("url"),
+                        posted_date=job.get("posted_date"),
+                        canva_design_id=canva_design_id, canva_url=canva_url,
+                        pdf=payload, pdf_filename=filename, conn=_db_conn())
+    except Exception as exc:                     # noqa: BLE001 - report, never abort the run
+        print(f"[save_pdf] {filename}: STORE FAILED ({exc!r}) — the Canva design "
+              f"exists but this CV is not in the database", file=sys.stderr)
+        return {"saved": None, "error": str(exc), "filename": filename}
+
+    _MATCHED += 1
+    print(f"[save_pdf] stored {filename} ({len(payload):,} bytes)",
+          file=sys.stderr)
+    return {"saved": filename, "error": "", "filename": filename}
 
 
-def write_index(entries, window, skipped_count, today=None):
-    """Write this run's index.md - the operator view that cannot live inside a CV."""
-    from render import render_index
-    path = run_dir(today) / "index.md"
-    path.write_text(render_index(entries, window, skipped_count), encoding="utf-8")
-    print(f"[write_index] wrote {path} ({len(entries)} entries, "
-          f"{skipped_count} skipped)", file=sys.stderr)
-    return {"written": str(path)}
