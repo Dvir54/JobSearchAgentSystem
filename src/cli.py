@@ -4,6 +4,7 @@ Orchestration only — every decision of substance lives in db.py, tooling.py or
 the agent's own judgement. This module's job is the run's shape: preflight, open
 the run row, drive the session, close the row, report by email.
 """
+import argparse
 import os
 import subprocess
 import sys
@@ -199,3 +200,49 @@ def command_setup():
     print("\nSetup complete. The first run happens at 09:00; "
           "`jobs run` starts one now.")
     return 0
+
+
+def command_pdf(job_id, open_after=True):
+    """Write one stored CV to the current directory and open it.
+
+    This is the only route from the database back to a file the operator can
+    attach: the digest deliberately carries no attachments.
+    """
+    load_dotenv()
+    found = db.fetch_pdf(job_id)
+    if found is None:
+        print(f"No stored CV for job {job_id!r}. Check the id in the digest "
+              f"email — it is the number after `jobs pdf`.")
+        return 1
+    payload, filename = found
+    path = Path.cwd() / filename
+    path.write_bytes(payload)
+    print(f"Wrote {path} ({len(payload):,} bytes)")
+    if open_after:
+        os.startfile(path)        # noqa: S606 - Windows-only by design
+    return 0
+
+
+def main(argv=None):
+    parser = argparse.ArgumentParser(
+        prog="jobs", description="Daily job search, tailoring, and digest.")
+    subparsers = parser.add_subparsers(dest="command")
+    subparsers.add_parser("setup", help="install: database, schema, 9am task")
+    subparsers.add_parser("run",
+                          help="run one day's search (the 9am task calls this)")
+    pdf_parser = subparsers.add_parser("pdf", help="write a stored CV to a file")
+    pdf_parser.add_argument("job_id", help="the id shown in the digest email")
+
+    args = parser.parse_args(argv)
+    if args.command == "setup":
+        return command_setup()
+    if args.command == "run":
+        return command_run()
+    if args.command == "pdf":
+        return command_pdf(args.job_id)
+    parser.print_help()
+    return 2
+
+
+if __name__ == "__main__":
+    sys.exit(main())

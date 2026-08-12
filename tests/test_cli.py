@@ -238,3 +238,53 @@ def test_setup_reports_a_container_that_will_not_start(pg, monkeypatch, capsys):
     monkeypatch.setattr(cli, "start_container", down)
     assert cli.command_setup() == 1
     assert "Docker Desktop" in capsys.readouterr().out
+
+
+def test_pdf_writes_the_stored_bytes_to_the_current_directory(pg, monkeypatch,
+                                                              tmp_path):
+    monkeypatch.setattr(db, "session", lambda: pg)
+    monkeypatch.chdir(tmp_path)
+    run_id = db.start_run("24h", pg)
+    db.record_verdict("111", run_id, "Backend Dev", "Acme", 82, "matched", "r",
+                      conn=pg)
+    db.insert_match("111", run_id, title="Backend Dev", company="Acme",
+                    location="Israel", apply_url="https://a/1",
+                    posted_date="2026-08-12", canva_design_id="DAG1",
+                    canva_url="https://c/1", pdf=b"%PDF-1.4 body",
+                    pdf_filename="Acme_Backend_Dev_111.pdf", conn=pg)
+
+    assert cli.command_pdf("111", open_after=False) == 0
+    written = tmp_path / "Acme_Backend_Dev_111.pdf"
+    assert written.read_bytes() == b"%PDF-1.4 body"
+
+
+def test_pdf_reports_an_unknown_job_without_writing_anything(pg, monkeypatch,
+                                                             tmp_path, capsys):
+    monkeypatch.setattr(db, "session", lambda: pg)
+    monkeypatch.chdir(tmp_path)
+    assert cli.command_pdf("nope", open_after=False) == 1
+    assert "nope" in capsys.readouterr().out
+    assert list(tmp_path.iterdir()) == []
+
+
+def test_main_dispatches_each_command(monkeypatch):
+    called = []
+    monkeypatch.setattr(cli, "command_setup", lambda: called.append("setup") or 0)
+    monkeypatch.setattr(cli, "command_run", lambda: called.append("run") or 0)
+    monkeypatch.setattr(cli, "command_pdf",
+                        lambda job_id: called.append(f"pdf:{job_id}") or 0)
+    assert cli.main(["setup"]) == 0
+    assert cli.main(["run"]) == 0
+    assert cli.main(["pdf", "4446164871"]) == 0
+    assert called == ["setup", "run", "pdf:4446164871"]
+
+
+def test_main_propagates_a_failing_exit_code(monkeypatch):
+    # Task Scheduler reads this; a run that failed must not look successful.
+    monkeypatch.setattr(cli, "command_run", lambda: 1)
+    assert cli.main(["run"]) == 1
+
+
+def test_main_with_no_command_shows_usage_and_fails(capsys):
+    assert cli.main([]) == 2
+    assert "setup" in capsys.readouterr().out

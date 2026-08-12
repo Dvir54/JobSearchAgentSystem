@@ -1,0 +1,14 @@
+agent
+canva
+cli
+config
+db
+hooks
+jobs
+mailer
+render
+resume
+scheduling
+tailoring
+tooling
+tools
