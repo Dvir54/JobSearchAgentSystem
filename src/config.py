@@ -119,3 +119,9 @@ DATABASE_URL = os.environ.get(
 TEST_DATABASE_URL = os.environ.get(
     "TEST_DATABASE_URL", "postgresql://jobs:jobs@127.0.0.1:5433/jobs_test")
 SCHEMA_PATH = PROJECT_ROOT / "schema.sql"
+
+# --- Daily email (Phase R3) ---
+SMTP_HOST = "smtp.gmail.com"
+SMTP_PORT = 465                      # implicit TLS; no STARTTLS negotiation
+GMAIL_ADDRESS = os.environ.get("GMAIL_ADDRESS", "")
+GMAIL_APP_PASSWORD = os.environ.get("GMAIL_APP_PASSWORD", "")
