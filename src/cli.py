@@ -20,6 +20,22 @@ import scheduling
 import tooling
 
 
+def _configure_console():
+    """Make stdout/stderr able to carry non-ASCII without killing the command.
+
+    A Windows console defaults to cp1252, and several messages here contain
+    arrows, em-dashes and middle dots — printing one raised UnicodeEncodeError
+    and took down `jobs setup` while it was reporting an unrelated error.
+    errors="replace" means a stray character degrades to '?' instead of ending
+    the run.
+    """
+    for stream in (sys.stdout, sys.stderr):
+        try:
+            stream.reconfigure(encoding="utf-8", errors="replace")
+        except (AttributeError, ValueError):
+            pass          # captured or already-wrapped streams: nothing to do
+
+
 def wait_for_database(attempts=20, delay=1.5):
     """Block until Postgres answers, or give up with a readable message.
 
@@ -224,6 +240,7 @@ def command_pdf(job_id, open_after=True):
 
 
 def main(argv=None):
+    _configure_console()
     parser = argparse.ArgumentParser(
         prog="jobs", description="Daily job search, tailoring, and digest.")
     subparsers = parser.add_subparsers(dest="command")

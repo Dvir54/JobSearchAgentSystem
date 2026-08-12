@@ -1,6 +1,14 @@
 import os
 from pathlib import Path
 
+from dotenv import load_dotenv
+
+# Loaded HERE, at import, because the settings below snapshot os.environ at import
+# time. Calling load_dotenv() later — from inside a CLI command, as the entry
+# points used to — is too late: config has already captured empty strings, and
+# `jobs setup` then reports credentials missing that are sitting in .env.
+load_dotenv()
+
 ROLE_QUERIES = [
     "software developer",
     "backend developer",

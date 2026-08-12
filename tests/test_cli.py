@@ -288,3 +288,41 @@ def test_main_propagates_a_failing_exit_code(monkeypatch):
 def test_main_with_no_command_shows_usage_and_fails(capsys):
     assert cli.main([]) == 2
     assert "setup" in capsys.readouterr().out
+
+
+def test_config_loads_dotenv_before_reading_the_environment(monkeypatch):
+    """Regression: config read os.environ at import time while load_dotenv ran
+    later, inside command_setup — so GMAIL_* were empty strings no matter what
+    .env held, and `jobs setup` reported credentials missing that were present."""
+    import importlib
+
+    import dotenv
+    called = []
+    monkeypatch.setattr(dotenv, "load_dotenv", lambda *a, **k: called.append(1))
+    import config as config_module
+    importlib.reload(config_module)
+    assert called, "config must load .env before reading os.environ"
+    importlib.reload(config_module)      # restore real values for later tests
+
+
+def test_console_is_configured_for_non_ascii(monkeypatch):
+    """Regression: printing the app-password hint (which contains an arrow) to a
+    cp1252 console raised UnicodeEncodeError and took the command down."""
+    calls = {}
+
+    class FakeStream:
+        def reconfigure(self, **kwargs):
+            calls.update(kwargs)
+
+    monkeypatch.setattr(cli.sys, "stdout", FakeStream())
+    monkeypatch.setattr(cli.sys, "stderr", FakeStream())
+    cli._configure_console()
+    assert calls["encoding"] == "utf-8"
+    assert calls["errors"] == "replace"
+
+
+def test_configure_console_survives_a_stream_without_reconfigure(monkeypatch):
+    # pytest's captured stdout has no reconfigure(); this must not be fatal.
+    monkeypatch.setattr(cli.sys, "stdout", object())
+    monkeypatch.setattr(cli.sys, "stderr", object())
+    cli._configure_console()
