@@ -1,9 +1,0 @@
-Metadata-Version: 2.4
-Name: job-search-agent
-Version: 0.3.0
-Summary: Daily job search, CV tailoring, and digest email.
-Requires-Python: >=3.11
-Requires-Dist: pydantic>=2.7
-Requires-Dist: python-dotenv>=1.0
-Requires-Dist: claude-agent-sdk>=0.1
-Requires-Dist: psycopg[binary]>=3.1
