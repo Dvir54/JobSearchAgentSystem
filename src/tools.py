@@ -112,11 +112,15 @@ async def get_job(args: dict) -> dict:
     return _json_result(tooling.get_job(args["job_id"]))
 
 
-@tool("save_pdf", "Download an exported Canva PDF into this run's output directory.",
-      {"export_url": str, "company": str, "title": str, "job_id": str})
+@tool("save_pdf", "Download an exported Canva PDF and store it in the database "
+      "against this job. Pass the job's id — the posting's company, title, URL "
+      "and location are already held for you.",
+      {"export_url": str, "job_id": str, "canva_design_id": str,
+       "canva_url": str})
 async def save_pdf(args: dict) -> dict:
-    return _json_result(tooling.save_pdf(args["export_url"], args["company"],
-                                         args["title"], args["job_id"]))
+    return _json_result(tooling.save_pdf(args["export_url"], args["job_id"],
+                                         args["canva_design_id"],
+                                         args["canva_url"]))
 
 
 @tool("record_verdict", "Record your judgement of one job — kept or skipped. Call "

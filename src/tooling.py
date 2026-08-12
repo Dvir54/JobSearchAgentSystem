@@ -515,15 +515,28 @@ def run_dir(today=None):
     return path
 
 
-def save_pdf(export_url, company, title, job_id, today=None):
-    """Download an exported Canva PDF into this run's output directory.
+def save_pdf(export_url, job_id, canva_design_id, canva_url):
+    """Download an exported Canva PDF and store it in the database.
 
     The agent has no Bash/Read/Write/WebFetch - those are denied so a failure
     cannot degrade into hand-parsing - so downloading has to happen here.
+
+    Takes the job by id, not by company/title: the full posting is already held
+    in `_JOBS_BY_ID`, so location, apply URL and posted date come from what the
+    source actually said rather than from the model retyping it.
+
     Returns rather than raises: one job's failed download must not end the run.
     """
+    global _MATCHED
     from render import pdf_filename
-    filename = pdf_filename(company, title, job_id)
+    job = _JOBS_BY_ID.get(str(job_id))
+    if job is None:
+        message = (f"no job with id {job_id!r} in this run; cannot store a CV "
+                   f"for a posting that was never listed")
+        print(f"[save_pdf] {message}", file=sys.stderr)
+        return {"saved": None, "error": message, "filename": ""}
+
+    filename = pdf_filename(job["company"], job["title"], job["id"])
     try:
         payload = _fetch_bytes(export_url)
     except Exception as exc:                     # noqa: BLE001 - report, never abort the run
@@ -531,14 +544,27 @@ def save_pdf(export_url, company, title, job_id, today=None):
         return {"saved": None, "error": str(exc), "filename": filename}
 
     if not payload:
-        message = "download was empty; nothing written"
+        message = "download was empty; nothing stored"
         print(f"[save_pdf] {filename}: {message}", file=sys.stderr)
         return {"saved": None, "error": message, "filename": filename}
 
-    path = run_dir(today) / filename
-    path.write_bytes(payload)
-    print(f"[save_pdf] wrote {path} ({len(payload):,} bytes)", file=sys.stderr)
-    return {"saved": str(path), "error": "", "filename": filename}
+    try:
+        import db
+        db.insert_match(job["id"], _RUN_ID, title=job["title"],
+                        company=job["company"], location=job.get("location"),
+                        apply_url=job.get("url"),
+                        posted_date=job.get("posted_date"),
+                        canva_design_id=canva_design_id, canva_url=canva_url,
+                        pdf=payload, pdf_filename=filename, conn=_db_conn())
+    except Exception as exc:                     # noqa: BLE001 - report, never abort the run
+        print(f"[save_pdf] {filename}: STORE FAILED ({exc!r}) — the Canva design "
+              f"exists but this CV is not in the database", file=sys.stderr)
+        return {"saved": None, "error": str(exc), "filename": filename}
+
+    _MATCHED += 1
+    print(f"[save_pdf] stored {filename} ({len(payload):,} bytes)",
+          file=sys.stderr)
+    return {"saved": filename, "error": "", "filename": filename}
 
 
 def write_index(entries, window, skipped_count, today=None):

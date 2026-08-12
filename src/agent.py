@@ -254,8 +254,10 @@ Follow this workflow exactly:
    i. Call `get-export-formats` for this design first — `export-design` requires it and
       will not accept a guessed format. Then call `export-design` for PDF and poll until
       it completes.
-   j. Call `save_pdf` with the export URL, the company, the title and the job id.
-      You have no other way to write a file.
+   j. Call `save_pdf` with the export URL, the job id, the design id from step (d)
+      and that design's edit URL. It downloads the PDF and stores it in the
+      database — you have no other way to persist it. There is no output folder
+      and no filename to choose.
    k. Call `move-item-to-folder` to file the design in this run's folder.
 
    If `perform-editing-operations` is denied by the guard, call
