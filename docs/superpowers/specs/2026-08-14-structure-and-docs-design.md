@@ -157,7 +157,11 @@ Item 1 is a manual Canva action by Dvir and blocks nothing.
 
 ## Verification
 
-- All 239 existing tests stay green; no test is deleted to make the move easier.
+- All 239 existing tests stay green through the restructure — the move changes import
+  lines only, so a test that fails there is a real breakage, not expected churn.
+- Item 2 legitimately changes two of them: the `fetch_pdf` test (third return value) and
+  the `command_pdf` test (destination is now `output/<run date>/`, not the working
+  directory). Those are the only two allowed to change, and no test is deleted.
 - New tests: `PROJECT_ROOT` resolves to the real repo root; `fetch_pdf` returns the run
   date; `command_pdf` writes under `output/<run date>/`.
 - `jobs.exe` invoked for real after reinstalling.
