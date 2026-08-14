@@ -104,13 +104,31 @@ def _match(pg, job_id, score, company="Acme"):
 
 def test_pdf_bytes_round_trip_unchanged(pg):
     _match(pg, "111", 82)
-    pdf, filename = db.fetch_pdf("111", pg)
+    pdf, filename, _ = db.fetch_pdf("111", pg)
     assert pdf == PDF_BYTES          # byte-identical, not merely similar
     assert filename == "Acme_111.pdf"
 
 
 def test_fetch_pdf_returns_none_for_an_unknown_job(pg):
     assert db.fetch_pdf("does-not-exist", pg) is None
+
+
+def test_fetch_pdf_returns_the_date_the_cv_was_made(pg):
+    """`jobs pdf` files exports under the run's date, so the date must come back
+    with the bytes.
+
+    Compared against the DATABASE's idea of today, not Python's: created_at
+    defaults to now() inside a UTC container while this machine is UTC+3, so the
+    two genuinely disagree for the first hours of every local day. Asserting
+    against date.today() would pass all afternoon and fail after midnight.
+    """
+    _match(pg, "111", 82)
+    pdf, filename, run_date = db.fetch_pdf("111", pg)
+    assert pdf == PDF_BYTES
+    assert filename == "Acme_111.pdf"
+    with pg.cursor() as cur:
+        cur.execute("SELECT now()::date")
+        assert run_date == cur.fetchone()[0]
 
 
 def test_matches_for_run_joins_the_verdict_and_orders_by_score(pg):

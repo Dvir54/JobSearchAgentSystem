@@ -30,7 +30,7 @@ def test_save_pdf_stores_the_bytes_and_the_posting_fields(pg, monkeypatch):
 
     assert out["error"] == ""
     assert tooling.matched_count() == 1
-    pdf, filename = db.fetch_pdf("4446167840", pg)
+    pdf, filename, _ = db.fetch_pdf("4446167840", pg)
     assert pdf == b"%PDF-1.7 fake"
     assert "4446167840" in filename and filename.endswith(".pdf")
     with pg.cursor() as cur:

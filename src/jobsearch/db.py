@@ -151,12 +151,17 @@ def insert_match(job_id, run_id, *, title, company, location, apply_url,
 
 
 def fetch_pdf(job_id, conn=None):
-    """(bytes, filename) for one stored CV, or None. Backs `jobs pdf <id>`."""
+    """(bytes, filename, run_date) for one stored CV, or None.
+
+    Backs `jobs pdf <id>`. The date is the day the CV was made, not today, so
+    exporting the same job twice always lands in the same dated directory
+    instead of scattering one job across several.
+    """
     with _conn(conn).cursor() as cur:
-        cur.execute("SELECT pdf, pdf_filename FROM matches WHERE job_id = %s",
-                    (str(job_id),))
+        cur.execute("""SELECT pdf, pdf_filename, created_at::date
+                       FROM matches WHERE job_id = %s""", (str(job_id),))
         row = cur.fetchone()
-        return (bytes(row[0]), row[1]) if row else None
+        return (bytes(row[0]), row[1], row[2]) if row else None
 
 
 def matches_for_run(run_id, conn=None):
