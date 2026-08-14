@@ -41,6 +41,14 @@ BASE_CV_PATH = PROJECT_ROOT / "base_cv.md"
 # this a failed morning leaves nothing behind at all.
 LOG_DIR = PROJECT_ROOT / "logs"
 
+# Where `jobs pdf <id>` writes a stored CV back out, under a dated subdirectory.
+#
+# This is NOT the OUTPUT_DIR deleted in R3. That one was the system of record —
+# tailored CVs lived on disk and nowhere else. This one is only an export
+# destination: Postgres holds the CV, and this is a copy you can attach to an
+# email. Deleting the whole directory loses nothing.
+OUTPUT_DIR = PROJECT_ROOT / "output"
+
 # --- Monid job source ---
 MONID_MCP_URL = "https://mcp.monid.ai/v1"
 MONID_PROVIDER = "apify"
