@@ -1,7 +1,7 @@
 import json
 from pathlib import Path
 
-from jobs import JobPosting, normalize_posting
+from jobsearch.agent.jobs import JobPosting, normalize_posting
 
 FIXTURE = Path(__file__).parent / "fixtures" / "harvestapi_response.json"
 

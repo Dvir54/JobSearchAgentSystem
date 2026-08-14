@@ -27,10 +27,13 @@ EXPERIENCE_SECTION = "Work Experience"
 PROJECTS_SECTION = "Projects"
 TAILORED_SECTIONS = (SUMMARY_SECTION, SKILLS_SECTION, EXPERIENCE_SECTION, PROJECTS_SECTION)
 
-# The repo root — one level up from src/, where the base CV and schema live.
-# There is no OUTPUT_DIR: every tailored CV goes into Postgres (see db.py), and
-# `jobs pdf` writes one back out on demand.
-PROJECT_ROOT = Path(__file__).parent.parent
+# src/jobsearch/config.py -> src/jobsearch -> src -> the repo root.
+# THREE levels, not two: this file moved into the jobsearch package in R4, and
+# everything the agent reads from disk hangs off it (base_cv.md, schema.sql,
+# logs/, output/). A wrong root still yields valid Path objects, so nothing
+# would crash — the agent would just read a CV that isn't there.
+# tests/test_config_paths.py fails loudly if this is ever wrong again.
+PROJECT_ROOT = Path(__file__).parent.parent.parent
 BASE_CV_PATH = PROJECT_ROOT / "base_cv.md"
 
 # Where `jobs run` tees its stderr. A scheduled run has no console anyone will

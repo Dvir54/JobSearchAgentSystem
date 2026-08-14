@@ -12,11 +12,11 @@ import json
 import re
 import sys
 
-import canva
-import config
-import tooling
-from resume import parse_resume
-from tailoring import TailoredCV, strip_invented_skills
+from jobsearch.resume import canva
+from jobsearch import config
+from jobsearch.agent import tooling
+from jobsearch.resume.base_cv import parse_resume
+from jobsearch.resume.tailoring import TailoredCV, strip_invented_skills
 
 # The harvestapi scrape is async and takes ~45s-2min. The agent has no clock and
 # no way to wait: `disallowed_tools` removed Bash (which it previously used for

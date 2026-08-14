@@ -1,6 +1,6 @@
 from pathlib import Path
 
-from resume import Entry, ParsedResume, Section, parse_resume
+from jobsearch.resume.base_cv import Entry, ParsedResume, Section, parse_resume
 
 SAMPLE = (Path(__file__).parent / "fixtures" / "sample_cv.md").read_text(encoding="utf-8")
 

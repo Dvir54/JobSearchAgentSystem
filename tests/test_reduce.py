@@ -1,9 +1,9 @@
 import json
 from pathlib import Path
 
-import config
-import tooling
-from tooling import reduce_run_payload
+from jobsearch import config
+from jobsearch.agent import tooling
+from jobsearch.agent.tooling import reduce_run_payload
 
 FIXTURE = Path(__file__).parent / "fixtures" / "harvestapi_response.json"
 
@@ -177,19 +177,19 @@ def test_real_scrape_shrinks_hard_and_preserves_descriptions():
 
 
 def test_is_run_in_progress_detects_polling_states():
-    from tooling import is_run_in_progress
+    from jobsearch.agent.tooling import is_run_in_progress
     assert is_run_in_progress(json.dumps({"status": "RUNNING"})) is True
     assert is_run_in_progress(json.dumps({"status": "PENDING"})) is True
 
 
 def test_is_run_in_progress_false_for_terminal_states():
-    from tooling import is_run_in_progress
+    from jobsearch.agent.tooling import is_run_in_progress
     for terminal in ("COMPLETED", "FAILED", "BLOCKED", "TIMED_OUT"):
         assert is_run_in_progress(json.dumps({"status": terminal})) is False
 
 
 def test_is_run_in_progress_never_raises_on_junk():
-    from tooling import is_run_in_progress
+    from jobsearch.agent.tooling import is_run_in_progress
     assert is_run_in_progress("not json") is False
     assert is_run_in_progress(None) is False
     assert is_run_in_progress(json.dumps([1, 2, 3])) is False

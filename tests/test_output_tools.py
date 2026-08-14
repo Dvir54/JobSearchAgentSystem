@@ -1,8 +1,8 @@
-import tooling
+from jobsearch.agent import tooling
 
 
 def db_start(pg):
-    import db
+    from jobsearch import db
     return db.start_run("24h", pg)
 
 
@@ -16,7 +16,7 @@ def _hold_job(job_id="111", company="Acme", title="Backend Dev"):
 
 
 def test_save_pdf_stores_the_bytes_and_the_posting_fields(pg, monkeypatch):
-    import db
+    from jobsearch import db
     run_id = db.start_run("24h", pg)
     monkeypatch.setattr(tooling, "_db_conn", lambda: pg)
     tooling.set_run_id(run_id)
@@ -82,7 +82,7 @@ def test_save_pdf_rejects_an_empty_download(pg, monkeypatch):
 
 
 def test_record_verdict_writes_the_row_and_counts_it(pg, monkeypatch):
-    import db
+    from jobsearch import db
     run_id = db.start_run("24h", pg)
     monkeypatch.setattr(tooling, "_db_conn", lambda: pg)
     tooling.set_run_id(run_id)
@@ -96,7 +96,7 @@ def test_record_verdict_writes_the_row_and_counts_it(pg, monkeypatch):
 
 
 def test_record_verdict_rejects_an_unknown_verdict(pg, monkeypatch):
-    import db
+    from jobsearch import db
     monkeypatch.setattr(tooling, "_db_conn", lambda: pg)
     tooling.set_run_id(db.start_run("24h", pg))
     result = tooling.record_verdict("111", "T", "C", 82, "maybe", "r")

@@ -1,5 +1,5 @@
-from resume import parse_resume
-from tailoring import TailoredCV, TailoredEntry, repair_entry_coverage, strip_invented_skills
+from jobsearch.resume.base_cv import parse_resume
+from jobsearch.resume.tailoring import TailoredCV, TailoredEntry, repair_entry_coverage, strip_invented_skills
 
 BASE_MD = """# Cand
 

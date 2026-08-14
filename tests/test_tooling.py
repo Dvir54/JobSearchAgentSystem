@@ -1,5 +1,5 @@
-import config
-from tooling import build_resume_view, clean_jobs, prepare_resume, safe_filename
+from jobsearch import config
+from jobsearch.agent.tooling import build_resume_view, clean_jobs, prepare_resume, safe_filename
 
 BASE_MD = """# Cand
 

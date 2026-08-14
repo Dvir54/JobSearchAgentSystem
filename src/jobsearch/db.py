@@ -10,7 +10,7 @@ run-spanning transaction to roll back.
 """
 import psycopg
 
-import config
+from jobsearch import config
 
 _SESSION = None
 

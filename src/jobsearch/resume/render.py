@@ -5,7 +5,7 @@ The per-run index.md is gone: the run's record is rows in `runs`, `seen` and
 is the filename, which is still stored alongside each CV so `jobs pdf` can write
 it back out under a recognisable name.
 """
-from tooling import safe_filename
+from jobsearch.agent.tooling import safe_filename
 
 
 def pdf_filename(company, title, job_id):

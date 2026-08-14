@@ -1,5 +1,5 @@
-from resume import parse_resume
-from tailoring import (
+from jobsearch.resume.base_cv import parse_resume
+from jobsearch.resume.tailoring import (
     TailoredCV,
     TailoredEntry,
     find_invented_skills,

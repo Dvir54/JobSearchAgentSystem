@@ -1,4 +1,4 @@
-import db
+from jobsearch import db
 
 
 def test_apply_schema_creates_the_three_tables(pg):
@@ -15,7 +15,7 @@ def test_apply_schema_is_idempotent(pg):
 
 
 def test_session_is_reused(monkeypatch):
-    import config
+    from jobsearch import config
     monkeypatch.setattr(config, "DATABASE_URL", config.TEST_DATABASE_URL)
     db.close_session()
     first = db.session()

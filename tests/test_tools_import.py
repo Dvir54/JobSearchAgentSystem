@@ -1,8 +1,8 @@
-import config
+from jobsearch import config
 
 
 def test_tools_module_exposes_server():
-    import tools
+    from jobsearch.agent import tools
     assert hasattr(tools, "resume_tools")
 
 
@@ -10,7 +10,7 @@ def test_filter_jobs_tool_is_gone():
     # Filtering now happens in the PostToolUse hook, before the model sees the
     # payload. Re-adding this tool would reintroduce the round-trip that made
     # the agent re-emit the entire scrape as tool arguments.
-    import tools
+    from jobsearch.agent import tools
     assert not hasattr(tools, "filter_jobs")
     assert not hasattr(tools, "_filter_jobs_impl")
 
@@ -19,7 +19,7 @@ def test_agent_registers_the_reduction_hook(monkeypatch):
     # build_options() reads os.environ['MONID_API_KEY'] directly; without a
     # .env in the checkout this raises KeyError unless we supply a dummy.
     monkeypatch.setenv("MONID_API_KEY", "test-key")
-    import agent
+    from jobsearch.agent import session as agent
     opts = agent.build_options()
     matchers = opts.hooks["PostToolUse"]
     assert any(m.matcher == "mcp__monid__monid_get_run" for m in matchers)
@@ -36,8 +36,8 @@ def test_agent_restricts_built_in_tools_and_raises_mcp_output_cap(monkeypatch):
     # PostToolUse hooks run, so MAX_MCP_OUTPUT_TOKENS must be raised via env for
     # the hook to ever see real JSON instead of a stub.
     monkeypatch.setenv("MONID_API_KEY", "test-key")
-    import config
-    import agent
+    from jobsearch import config
+    from jobsearch.agent import session as agent
     opts = agent.build_options()
     assert "Bash" in opts.disallowed_tools
     assert "Agent" in opts.disallowed_tools
@@ -46,7 +46,7 @@ def test_agent_restricts_built_in_tools_and_raises_mcp_output_cap(monkeypatch):
 
 def test_prepare_resume_tool_replaced_write_resume(monkeypatch):
     monkeypatch.setenv("MONID_API_KEY", "dummy")
-    import tools
+    from jobsearch.agent import tools
     assert hasattr(tools, "prepare_resume")
     assert not hasattr(tools, "write_resume")
 
@@ -54,14 +54,14 @@ def test_prepare_resume_tool_replaced_write_resume(monkeypatch):
 def test_record_verdict_tool_replaced_write_index():
     # The run's record is now rows in `seen` and `matches`, not an index.md.
     # record_verdict is also what feeds cross-run dedup, so it is not optional.
-    import tools
+    from jobsearch.agent import tools
     assert hasattr(tools, "record_verdict")
     assert not hasattr(tools, "write_index")
 
 
 def test_agent_registers_canva_mcp_and_the_write_guard(monkeypatch):
     monkeypatch.setenv("MONID_API_KEY", "dummy")
-    import agent
+    from jobsearch.agent import session as agent
     opts = agent.build_options()
 
     assert "canva" in opts.mcp_servers
@@ -89,7 +89,7 @@ def test_agent_registers_canva_mcp_and_the_write_guard(monkeypatch):
 
 def test_agent_still_denies_the_builtin_tools(monkeypatch):
     monkeypatch.setenv("MONID_API_KEY", "dummy")
-    import agent
+    from jobsearch.agent import session as agent
     opts = agent.build_options()
     # save_pdf/record_verdict exist precisely because these stay denied
     for denied in ("Bash", "Read", "Write", "WebFetch", "Agent"):
@@ -101,8 +101,8 @@ def test_the_pinned_search_recipe_carries_the_body_envelope():
     over the bare body as `input`, so monid_run rejected the first call of every
     run and the agent improvised the wrapper. tooling._window() reads
     run["input"]["body"], which is the same fact from the other end."""
-    import agent
-    import tooling
+    from jobsearch.agent import session as agent
+    from jobsearch.agent import tooling
     assert agent._SEARCH_RECIPE == {"body": agent._SEARCH_RECIPE_BODY}
     assert "'body'" in agent.WORKFLOW
     # The two ends must agree: what we send is what the reducer reads back.

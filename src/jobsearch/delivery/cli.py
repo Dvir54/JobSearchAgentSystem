@@ -15,11 +15,11 @@ from pathlib import Path
 
 from dotenv import load_dotenv
 
-import config
-import db
-import mailer
-import scheduling
-import tooling
+from jobsearch import config
+from jobsearch import db
+from jobsearch.delivery import mailer
+from jobsearch.delivery import scheduling
+from jobsearch.agent import tooling
 
 
 def _configure_console():
@@ -185,11 +185,16 @@ def ensure_database():
 
 
 def _drive_session():
-    """Isolated so tests can replace the whole agent session."""
+    """Isolated so tests can replace the whole agent session.
+
+    The import stays inside the function: delivery imports the agent session,
+    and the session's module graph reaches back into delivery. Deferring it to
+    call time is what keeps that from being an import cycle.
+    """
     import asyncio
 
-    import agent
-    return asyncio.run(agent.run_session())
+    from jobsearch.agent import session
+    return asyncio.run(session.run_session())
 
 
 def _notify(run):

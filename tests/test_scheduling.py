@@ -2,7 +2,7 @@ import xml.etree.ElementTree as ET
 
 import pytest
 
-import scheduling
+from jobsearch.delivery import scheduling
 
 NS = {"t": "http://schemas.microsoft.com/windows/2004/02/mit/task"}
 

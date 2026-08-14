@@ -2,10 +2,10 @@ from datetime import datetime
 
 import pytest
 
-import cli
-import config
-import db
-import tooling
+from jobsearch.delivery import cli
+from jobsearch import config
+from jobsearch import db
+from jobsearch.agent import tooling
 
 
 def _boom(message):
@@ -325,7 +325,7 @@ def test_config_loads_dotenv_before_reading_the_environment(monkeypatch):
     import dotenv
     called = []
     monkeypatch.setattr(dotenv, "load_dotenv", lambda *a, **k: called.append(1))
-    import config as config_module
+    from jobsearch import config as config_module
     importlib.reload(config_module)
     assert called, "config must load .env before reading os.environ"
     importlib.reload(config_module)      # restore real values for later tests

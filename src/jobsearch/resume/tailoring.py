@@ -9,8 +9,8 @@ import re
 
 from pydantic import BaseModel
 
-from config import EXPERIENCE_SECTION, PROJECTS_SECTION
-from resume import ParsedResume
+from jobsearch.config import EXPERIENCE_SECTION, PROJECTS_SECTION
+from jobsearch.resume.base_cv import ParsedResume
 
 
 class TailoredEntry(BaseModel):

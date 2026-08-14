@@ -8,7 +8,7 @@ reads from disk hangs off it: base_cv.md, schema.sql, logs/, output/.
 These pass today. That is the point: they are a characterisation test guarding
 the R4 package move, not a red-green cycle.
 """
-import config
+from jobsearch import config
 
 
 def test_project_root_is_the_real_repo_root():

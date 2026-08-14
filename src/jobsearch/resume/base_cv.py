@@ -7,7 +7,7 @@ tech lines) verbatim so downstream tailoring cannot alter facts.
 import re
 from dataclasses import dataclass
 
-from config import TAILORED_SECTIONS
+from jobsearch.config import TAILORED_SECTIONS
 
 _SECTION_RE = re.compile(r"^##\s+(.+?)\s*$")
 _ENTRY_RE = re.compile(r"^###\s+")

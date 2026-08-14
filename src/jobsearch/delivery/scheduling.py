@@ -13,7 +13,7 @@ import tempfile
 from pathlib import Path
 from xml.sax.saxutils import escape
 
-import config
+from jobsearch import config
 
 # The wake-timer setting inside the Sleep subgroup of the active power plan.
 _WAKE_TIMERS_GUID = "bd3b718a-0680-4d9d-8ab2-e1d2b4ac806d"
