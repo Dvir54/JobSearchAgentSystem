@@ -33,6 +33,11 @@ TAILORED_SECTIONS = (SUMMARY_SECTION, SKILLS_SECTION, EXPERIENCE_SECTION, PROJEC
 PROJECT_ROOT = Path(__file__).parent.parent
 BASE_CV_PATH = PROJECT_ROOT / "base_cv.md"
 
+# Where `jobs run` tees its stderr. A scheduled run has no console anyone will
+# ever read — the window opens, scrolls and closes with the process — so without
+# this a failed morning leaves nothing behind at all.
+LOG_DIR = PROJECT_ROOT / "logs"
+
 # --- Monid job source ---
 MONID_MCP_URL = "https://mcp.monid.ai/v1"
 MONID_PROVIDER = "apify"
