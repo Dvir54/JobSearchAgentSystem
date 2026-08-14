@@ -17,10 +17,10 @@ import sys
 
 from dotenv import load_dotenv
 
-import config
-import hooks
-import tooling
-from tools import resume_tools
+from jobsearch import config
+from jobsearch.agent import hooks
+from jobsearch.agent import tooling
+from jobsearch.agent.tools import resume_tools
 
 # Loaded at import time (not just inside main()) so that MONID_API_KEY is already
 # in os.environ by the time build_options() runs — including when build_options()

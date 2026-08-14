@@ -3,9 +3,9 @@ import json
 
 import pytest
 
-import config
-import hooks
-from tooling import strip_invented_skills  # noqa: F401  (proves the guard path is shared)
+from jobsearch import config
+from jobsearch.agent import hooks
+from jobsearch.agent.tooling import strip_invented_skills  # noqa: F401  (shared guard path)
 
 
 @pytest.fixture(autouse=True)

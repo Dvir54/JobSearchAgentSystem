@@ -8,8 +8,8 @@ without Docker running gets a skip rather than a wall of errors.
 import psycopg
 import pytest
 
-import config
-import db
+from jobsearch import config
+from jobsearch import db
 
 
 def _ensure_test_database():
@@ -32,7 +32,7 @@ def _offline_dedup(monkeypatch):
     `seen` table happens to hold that day. Tests that actually exercise dedup
     override this with their own monkeypatch.
     """
-    import tooling
+    from jobsearch.agent import tooling
     if hasattr(tooling, "_query_unseen_ids"):
         monkeypatch.setattr(tooling, "_query_unseen_ids",
                             lambda job_ids: {str(job_id) for job_id in job_ids})

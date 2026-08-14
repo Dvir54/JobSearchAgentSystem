@@ -4,8 +4,8 @@ import json
 
 from claude_agent_sdk import create_sdk_mcp_server, tool
 
-import config
-import tooling
+from jobsearch import config
+from jobsearch.agent import tooling
 
 
 def _get_resume_impl():

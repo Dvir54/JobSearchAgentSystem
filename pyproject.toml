@@ -17,18 +17,17 @@ dependencies = [
 [project.scripts]
 # The scheduled task invokes this executable by absolute path — a
 # non-interactive session does not inherit the interactive PATH.
-jobs = "cli:main"
+jobs = "jobsearch.delivery.cli:main"
 
-[tool.setuptools]
-# Flat modules under src/, not a package: the app and the tests both import
-# them by bare name (`import config`), which is what pythonpath below mirrors.
-package-dir = {"" = "src"}
-py-modules = ["agent", "canva", "cli", "config", "db", "hooks", "jobs",
-              "mailer", "render", "resume", "scheduling", "tailoring",
-              "tooling", "tools"]
+[tool.setuptools.packages.find]
+# src-layout: one real package, `jobsearch`, with subpackages. Not flat modules
+# on sys.path — `config`, `tools`, `jobs` and `db` are far too generic to own at
+# top level, where an installed distribution could shadow them.
+where = ["src"]
+include = ["jobsearch*"]
 
 [tool.pytest.ini_options]
-# Source modules live in src/; put it on the path so tests import them
-# with flat names (e.g. `from jobs import ...`), matching how the app runs.
+# src/ on the path so tests resolve `jobsearch` the same way the installed
+# package does.
 pythonpath = ["src"]
 testpaths = ["tests"]

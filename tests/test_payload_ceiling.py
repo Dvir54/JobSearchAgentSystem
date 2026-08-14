@@ -13,8 +13,8 @@ from pathlib import Path
 
 import pytest
 
-import config
-import tooling
+from jobsearch import config
+from jobsearch.agent import tooling
 
 REAL_RUN = Path(__file__).parent / "fixtures" / "monid_run_2026-08-11.json"
 

@@ -15,11 +15,11 @@ from pathlib import Path
 
 from dotenv import load_dotenv
 
-import config
-import db
-import mailer
-import scheduling
-import tooling
+from jobsearch import config
+from jobsearch import db
+from jobsearch.delivery import mailer
+from jobsearch.delivery import scheduling
+from jobsearch.agent import tooling
 
 
 def _configure_console():
@@ -185,11 +185,16 @@ def ensure_database():
 
 
 def _drive_session():
-    """Isolated so tests can replace the whole agent session."""
+    """Isolated so tests can replace the whole agent session.
+
+    The import stays inside the function: delivery imports the agent session,
+    and the session's module graph reaches back into delivery. Deferring it to
+    call time is what keeps that from being an import cycle.
+    """
     import asyncio
 
-    import agent
-    return asyncio.run(agent.run_session())
+    from jobsearch.agent import session
+    return asyncio.run(session.run_session())
 
 
 def _notify(run):
@@ -361,10 +366,12 @@ def command_setup():
 
 
 def command_pdf(job_id, open_after=True):
-    """Write one stored CV to the current directory and open it.
+    """Write one stored CV under output/<run date>/ and open it.
 
     This is the only route from the database back to a file the operator can
-    attach: the digest deliberately carries no attachments.
+    attach: the digest deliberately carries no attachments. Filed under the date
+    the CV was made rather than today, so exporting the same job twice always
+    lands in the same place instead of scattering it across dated folders.
     """
     load_dotenv()
     found = db.fetch_pdf(job_id)
@@ -372,8 +379,11 @@ def command_pdf(job_id, open_after=True):
         print(f"No stored CV for job {job_id!r}. Check the id in the digest "
               f"email — it is the number after `jobs pdf`.")
         return 1
-    payload, filename = found
-    path = Path.cwd() / filename
+    payload, filename, run_date = found
+    # After the None check, so an unknown id leaves no empty folder behind.
+    directory = config.OUTPUT_DIR / run_date.isoformat()
+    directory.mkdir(parents=True, exist_ok=True)
+    path = directory / filename
     path.write_bytes(payload)
     print(f"Wrote {path} ({len(payload):,} bytes)")
     if open_after:

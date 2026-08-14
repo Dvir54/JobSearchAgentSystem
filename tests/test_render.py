@@ -1,4 +1,4 @@
-from render import pdf_filename
+from jobsearch.resume.render import pdf_filename
 
 
 

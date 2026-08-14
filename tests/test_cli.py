@@ -2,10 +2,10 @@ from datetime import datetime
 
 import pytest
 
-import cli
-import config
-import db
-import tooling
+from jobsearch.delivery import cli
+from jobsearch import config
+from jobsearch import db
+from jobsearch.agent import tooling
 
 
 def _boom(message):
@@ -266,10 +266,10 @@ def test_setup_also_starts_docker_desktop(pg, monkeypatch, capsys):
     assert "never became ready" in capsys.readouterr().out
 
 
-def test_pdf_writes_the_stored_bytes_to_the_current_directory(pg, monkeypatch,
-                                                              tmp_path):
+def test_pdf_writes_under_the_run_date_not_the_working_directory(pg, monkeypatch,
+                                                                  tmp_path):
     monkeypatch.setattr(db, "session", lambda: pg)
-    monkeypatch.chdir(tmp_path)
+    monkeypatch.setattr(config, "OUTPUT_DIR", tmp_path / "output")
     run_id = db.start_run("24h", pg)
     db.record_verdict("111", run_id, "Backend Dev", "Acme", 82, "matched", "r",
                       conn=pg)
@@ -280,17 +280,23 @@ def test_pdf_writes_the_stored_bytes_to_the_current_directory(pg, monkeypatch,
                     pdf_filename="Acme_Backend_Dev_111.pdf", conn=pg)
 
     assert cli.command_pdf("111", open_after=False) == 0
-    written = tmp_path / "Acme_Backend_Dev_111.pdf"
+
+    with pg.cursor() as cur:
+        cur.execute("SELECT now()::date")
+        today = cur.fetchone()[0]
+    written = (tmp_path / "output" / today.isoformat()
+               / "Acme_Backend_Dev_111.pdf")
     assert written.read_bytes() == b"%PDF-1.4 body"
 
 
-def test_pdf_reports_an_unknown_job_without_writing_anything(pg, monkeypatch,
-                                                             tmp_path, capsys):
+def test_pdf_reports_an_unknown_job_without_creating_a_directory(pg, monkeypatch,
+                                                                 tmp_path, capsys):
     monkeypatch.setattr(db, "session", lambda: pg)
-    monkeypatch.chdir(tmp_path)
+    monkeypatch.setattr(config, "OUTPUT_DIR", tmp_path / "output")
     assert cli.command_pdf("nope", open_after=False) == 1
     assert "nope" in capsys.readouterr().out
-    assert list(tmp_path.iterdir()) == []
+    # An unknown id must not leave an empty dated folder behind.
+    assert not (tmp_path / "output").exists()
 
 
 def test_main_dispatches_each_command(monkeypatch):
@@ -325,7 +331,7 @@ def test_config_loads_dotenv_before_reading_the_environment(monkeypatch):
     import dotenv
     called = []
     monkeypatch.setattr(dotenv, "load_dotenv", lambda *a, **k: called.append(1))
-    import config as config_module
+    from jobsearch import config as config_module
     importlib.reload(config_module)
     assert called, "config must load .env before reading os.environ"
     importlib.reload(config_module)      # restore real values for later tests

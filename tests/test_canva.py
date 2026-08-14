@@ -1,7 +1,7 @@
 import pytest
 
-import canva
-from canva import compute_capacity, parse_elements, validate_map
+from jobsearch.resume import canva
+from jobsearch.resume.canva import compute_capacity, parse_elements, validate_map
 
 # Trimmed from a real start-editing-transaction response (design DAHQxzJVWM4).
 # Coordinates are the real measured values — the capacity assertions below depend
@@ -122,7 +122,7 @@ def test_validate_map_reports_missing_validate_only_id():
     assert "NOPE" in problems[0]
 
 
-from canva import build_operations, find_overflows
+from jobsearch.resume.canva import build_operations, find_overflows
 
 SUMMARY = f"{PAGE}-LBrJ8LlFHVgPZm7d"
 SKILLS = f"{PAGE}-LBkVtV7y5fKZMm0H"

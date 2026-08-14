@@ -6,18 +6,18 @@ import re
 import sys
 from dataclasses import dataclass
 
-import canva
-import config
-from config import (
+from jobsearch.resume import canva
+from jobsearch import config
+from jobsearch.config import (
     EXPERIENCE_SECTION,
     LOCATION_KEYWORD,
     PROJECTS_SECTION,
     SKILLS_SECTION,
     SUMMARY_SECTION,
 )
-from jobs import normalize_posting
-from resume import parse_resume
-from tailoring import (
+from jobsearch.agent.jobs import normalize_posting
+from jobsearch.resume.base_cv import parse_resume
+from jobsearch.resume.tailoring import (
     TailoredCV,
     TailoredEntry,
     repair_entry_coverage,
@@ -103,7 +103,7 @@ def matched_count():
 
 def _db_conn():
     """Isolated so tests can substitute a connection or make it fail."""
-    import db
+    from jobsearch import db
     return db.session()
 
 
@@ -117,7 +117,7 @@ def record_verdict(job_id, title, company, fit_score, verdict, reason):
     if verdict not in VERDICTS:
         return {"error": f"verdict must be one of {VERDICTS}, got {verdict!r}"}
     try:
-        import db
+        from jobsearch import db
         db.record_verdict(job_id, _RUN_ID, title, company, fit_score, verdict,
                           reason, conn=_db_conn())
     except Exception as exc:                  # noqa: BLE001 - report, never abort
@@ -354,7 +354,7 @@ def last_run_stats():
 
 def _query_unseen_ids(job_ids):
     """Isolated so tests can make the database fail without one running."""
-    import db
+    from jobsearch import db
     return db.filter_unseen(job_ids)
 
 
@@ -520,7 +520,7 @@ def save_pdf(export_url, job_id, canva_design_id, canva_url):
     Returns rather than raises: one job's failed download must not end the run.
     """
     global _MATCHED
-    from render import pdf_filename
+    from jobsearch.resume.render import pdf_filename
     job = _JOBS_BY_ID.get(str(job_id))
     if job is None:
         message = (f"no job with id {job_id!r} in this run; cannot store a CV "
@@ -541,7 +541,7 @@ def save_pdf(export_url, job_id, canva_design_id, canva_url):
         return {"saved": None, "error": message, "filename": filename}
 
     try:
-        import db
+        from jobsearch import db
         db.insert_match(job["id"], _RUN_ID, title=job["title"],
                         company=job["company"], location=job.get("location"),
                         apply_url=job.get("url"),

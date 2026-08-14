@@ -12,7 +12,7 @@ import html as html_escape
 import smtplib
 from email.message import EmailMessage
 
-import config
+from jobsearch import config
 
 _SUBJECT_LIMIT = 120
 

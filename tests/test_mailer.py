@@ -1,4 +1,4 @@
-import mailer
+from jobsearch.delivery import mailer
 
 RUN_OK = {"id": 7, "status": "ok", "search_window": "24h", "fetched_count": 111,
           "skipped_seen_count": 80, "examined_count": 27, "matched_count": 2,
@@ -89,7 +89,7 @@ def test_a_failed_run_that_produced_matches_still_reports_the_failure():
 
 
 def test_build_message_is_multipart_with_both_bodies(monkeypatch):
-    import config
+    from jobsearch import config
     monkeypatch.setattr(config, "GMAIL_ADDRESS", "me@example.com")
     message = mailer.build_message("Subject", "plain", "<p>rich</p>")
     assert message["Subject"] == "Subject"
@@ -101,7 +101,7 @@ def test_build_message_is_multipart_with_both_bodies(monkeypatch):
 
 def test_non_ascii_survives_the_encode(monkeypatch):
     # Israeli listings bring Hebrew company names, and the digest uses em-dashes.
-    import config
+    from jobsearch import config
     monkeypatch.setattr(config, "GMAIL_ADDRESS", "me@example.com")
     body = "מובילאיי — fit 82"
     message = mailer.build_message("נמצאו משרות", body, f"<p>{body}</p>")
@@ -111,7 +111,7 @@ def test_non_ascii_survives_the_encode(monkeypatch):
 
 
 def test_send_logs_in_and_sends_once(monkeypatch):
-    import config
+    from jobsearch import config
     monkeypatch.setattr(config, "GMAIL_ADDRESS", "me@example.com")
     monkeypatch.setattr(config, "GMAIL_APP_PASSWORD", "app-password")
     calls = {}
@@ -141,7 +141,7 @@ def test_send_logs_in_and_sends_once(monkeypatch):
 
 def test_send_refuses_when_credentials_are_missing(monkeypatch):
     import pytest
-    import config
+    from jobsearch import config
     monkeypatch.setattr(config, "GMAIL_ADDRESS", "")
     monkeypatch.setattr(config, "GMAIL_APP_PASSWORD", "")
     with pytest.raises(RuntimeError) as excinfo:
@@ -151,7 +151,7 @@ def test_send_refuses_when_credentials_are_missing(monkeypatch):
 
 def test_a_failing_login_does_not_leak_the_password(monkeypatch):
     import pytest
-    import config
+    from jobsearch import config
     monkeypatch.setattr(config, "GMAIL_ADDRESS", "me@example.com")
     monkeypatch.setattr(config, "GMAIL_APP_PASSWORD", "sixteen-char-sec")
 
@@ -178,7 +178,7 @@ def test_a_failing_login_does_not_leak_the_password(monkeypatch):
 
 def test_an_unreachable_server_is_reported_readably(monkeypatch):
     import pytest
-    import config
+    from jobsearch import config
     monkeypatch.setattr(config, "GMAIL_ADDRESS", "me@example.com")
     monkeypatch.setattr(config, "GMAIL_APP_PASSWORD", "pw")
 
@@ -194,13 +194,13 @@ def test_an_unreachable_server_is_reported_readably(monkeypatch):
 def test_a_spaced_app_password_is_normalised(monkeypatch):
     # Google shows app passwords as "abcd efgh ijkl mnop"; pasting it verbatim
     # is the obvious thing to do, and Gmail's SMTP login rejects the spaces.
-    import config
+    from jobsearch import config
     monkeypatch.setattr(config, "GMAIL_APP_PASSWORD", "abcd efgh ijkl mnop")
     assert mailer.app_password() == "abcdefghijklmnop"
 
 
 def test_send_logs_in_with_the_normalised_password(monkeypatch):
-    import config
+    from jobsearch import config
     monkeypatch.setattr(config, "GMAIL_ADDRESS", "me@example.com")
     monkeypatch.setattr(config, "GMAIL_APP_PASSWORD", "abcd efgh ijkl mnop")
     used = {}
@@ -228,7 +228,7 @@ def test_send_logs_in_with_the_normalised_password(monkeypatch):
 
 def test_a_password_of_only_spaces_counts_as_missing(monkeypatch):
     import pytest
-    import config
+    from jobsearch import config
     monkeypatch.setattr(config, "GMAIL_ADDRESS", "me@example.com")
     monkeypatch.setattr(config, "GMAIL_APP_PASSWORD", "    ")
     with pytest.raises(RuntimeError):
