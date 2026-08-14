@@ -1,40 +1,34 @@
 # Job Search Agent
 
-A daily agent that finds junior software jobs in Israel, judges which ones genuinely fit
-*you*, and renders a job-tailored version of your real Canva résumé as a PDF for each
-strong match. It emails you a digest every morning at 09:00.
+**A daily agent that finds junior software jobs in Israel, judges which ones genuinely fit
+*you*, and renders a job-tailored version of your real Canva résumé as a PDF for each strong
+match.** One digest email lands every morning at 09:00.
 
 It stops at "here's a tailored CV worth sending." It does **not** apply for you.
 
----
+```mermaid
+flowchart LR
+  T["09:00<br/>Task Scheduler"] --> D["start Docker<br/>+ Postgres"]
+  D --> S["search LinkedIn<br/>via Monid"]
+  S --> R["reduce in-process<br/>dedupe · Israel · already-seen"]
+  R --> J{"junior?<br/>fit ≥ 70?"}
+  J -- no --> V["record verdict<br/>so tomorrow skips it"]
+  J -- yes --> C["tailor + copy<br/>the Canva design"]
+  C --> P["export PDF"]
+  P --> DB[("Postgres")]
+  V --> DB
+  DB --> M["one digest email"]
+```
 
-## What happens each morning
-
-Windows Task Scheduler runs `jobs run` at 09:00 — waking the laptop if it is asleep,
-otherwise running the moment you next log in. `jobs run` then **starts its own
-dependencies**: Docker Desktop if its daemon is not answering, then the database
-container. It does not merely wait for them, because on this machine nothing else starts
-them (Docker Desktop's own autostart is off, and a 9am run seven minutes after a reboot
-found no database at all). The agent then:
-
-1. **Searches** LinkedIn (via Monid → Apify's harvestapi scraper) for five role types in
-   Israel, entry-level, posted in the last 24 hours.
-2. **Reduces** the raw scrape in-process, before the model sees any of it: dedupe by id,
-   keep only Israel-located roles, and **drop every posting already judged on an earlier
-   day**. Yesterday's jobs cost nothing today — not even tokens.
-3. **Judges** each remaining posting against your CV, then records a verdict for every one
-   of them — kept or rejected — so tomorrow skips it.
-4. **Tailors** your résumé for each job above the fit threshold, copies your Canva design,
-   applies the edits, and exports a PDF.
-5. **Stores** each CV in Postgres with its score, reasoning and Canva link.
-6. **Emails** you one digest: the matches, or "nothing today", or the failure.
-
-You get exactly one email every morning, so silence means the schedule itself is broken —
-the one failure nothing inside the program can report.
+The interesting step is the second one. Deduping, the Israel filter and *"have I already
+judged this?"* all happen in-process, **before the model sees anything** — so a job you were
+shown yesterday costs nothing today, not even tokens. One live run examined 17 jobs for
+$3.31; the next run that morning found 15 of its 80 postings already judged, examined zero,
+and cost $0.48.
 
 ---
 
-## Install
+## Quickstart
 
 Requires Python 3.11+, Docker Desktop, and a Canva account with your résumé in it.
 
@@ -43,7 +37,7 @@ python -m venv .venv
 .venv/Scripts/pip install -e .
 ```
 
-Put these in `.env` at the repo root (git-ignored):
+Create `.env` at the repo root (git-ignored):
 
 ```
 ANTHROPIC_API_KEY=sk-ant-...
@@ -55,15 +49,11 @@ GMAIL_APP_PASSWORD=sixteencharacters
 The Gmail app password comes from Google Account → Security → App passwords, and needs
 2-step verification switched on.
 
-You also need your résumé at the repo root as `base_cv.md` (git-ignored). **Canva supplies
-the layout; `base_cv.md` supplies the facts.** It is what the agent is allowed to reword,
-and — more importantly — it is what the truthfulness guards diff against to catch an
-invented skill or a fabricated bullet. That check cannot read from Canva, because Canva is
-the thing being written to: you cannot validate a write against its own target.
-
-When your real CV changes, update both — `base_cv.md` for the content and the Canva
-template for the design. If they drift apart, drafts start getting rejected because the
-guards insist on content the design no longer has.
+Put your résumé at the repo root as `base_cv.md` (git-ignored). **Canva supplies the layout;
+`base_cv.md` supplies the facts.** It is what the agent may reword, and what the truthfulness
+guards diff against to catch an invented skill or a fabricated bullet. That check cannot read
+from Canva, because Canva is the thing being written to — you cannot validate a write against
+its own target.
 
 Then:
 
@@ -71,125 +61,52 @@ Then:
 jobs setup
 ```
 
-That starts the Postgres container, creates the schema, checks every key, logs into Gmail
-to prove the app password works, registers the 09:00 task, and tells you whether your power
-plan will let it wake the machine. It is safe to re-run.
+Starts Postgres, creates the schema, checks every key, logs into Gmail to prove the app
+password works, registers the 09:00 task, and reports whether your power plan will let it
+wake the machine. Safe to re-run.
 
----
+## The three commands
 
-## Daily use
+| Command | What it does |
+|---|---|
+| `jobs setup` | Install everything, once. Idempotent — re-running repairs a partial install. |
+| `jobs run` | One day's work. The 09:00 task calls this; run it by hand any time. |
+| `jobs pdf <id>` | Write one stored CV to `output/<run date>/` and open it. |
 
-Nothing. Read the email.
-
-```bash
-jobs pdf 4446164871   # write one stored CV next to you and open it
-jobs run              # start a run by hand
-```
-
-The digest carries no attachments — `jobs pdf <id>` is how a CV gets back out of the
+The digest carries **no attachments**, so `jobs pdf <id>` is how a CV gets back out of the
 database. The id is in the email.
 
-### When a morning goes wrong
+## The daily contract
 
-Every run tees its output to `logs/run-YYYY-MM-DD.log`. A scheduled task's console closes
-with the process, so without this an unattended failure leaves nothing behind — and a
-preflight failure leaves no `runs` row either, because it dies before one exists. Read the
-log first; it is the only record of the mornings you were not watching.
+You get **exactly one email every morning** — the matches, "nothing today", or the failure.
 
-If the log for a morning does not exist at all, the task never started. Check the schedule
-itself:
+**So silence is the alarm.** No email means the scheduler never fired or the network was
+down: the one class of failure nothing inside the program can report. Check
+`logs/run-YYYY-MM-DD.log`; if the file doesn't exist, the task never ran at all.
 
-```powershell
-Get-ScheduledTaskInfo JobSearchAgent        # LastRunTime, LastResult
-powercfg /query SCHEME_CURRENT SUB_SLEEP RTCWAKE   # both indexes must be 0x1
-```
+## What it deliberately does not do
 
-Wake timers must be enabled on **battery** as well as AC. Disabled on battery is the
-Windows default, and it silently turns `WakeToRun` into dead weight the moment you unplug —
-the task then waits for your next login rather than waking the machine.
+- **Apply to anything.** No auto-apply, no cover letters.
+- **Keep backups.** `docker compose down -v` destroys the history permanently. The agent
+  recovers — it just forgets.
+- **Catch up on a missed day.** The search window is 24 hours and is never widened
+  afterwards, so jobs posted on a day the machine never came on are never seen.
+- **Name Canva designs per job.** `copy-design` has no title parameter and the API has no
+  rename, so every copy inherits the template's name.
 
 ---
 
-## Where the data lives
+## Where to look next
 
-A local `postgres:16` container bound to `127.0.0.1:5433`, data in the `jobsearch-pgdata`
-Docker volume. Port 5433 rather than the default because this machine already runs a native
-PostgreSQL 18 service on 5432.
-
-| Table | What it holds |
+| Directory | What's in it |
 |---|---|
-| `runs` | One row per invocation: counts, window, status, error. |
-| `seen` | Every job ever examined, with its score, verdict and one-line reason. The primary key **is** the dedup mechanism. |
-| `matches` | The full record for jobs that passed, including the PDF bytes. |
+| [`src/jobsearch/`](src/jobsearch/README.md) | Settings and the database layer — the system of record |
+| [`src/jobsearch/agent/`](src/jobsearch/agent/README.md) | The autonomous session and the hooks that constrain it |
+| [`src/jobsearch/resume/`](src/jobsearch/resume/README.md) | CV parsing, truthfulness guards, Canva geometry |
+| [`src/jobsearch/delivery/`](src/jobsearch/delivery/README.md) | The CLI, the digest email, the 09:00 task |
+| [`tests/`](tests/README.md) | How to run them — and what they cannot catch |
+| [`docs/`](docs/README.md) | The design record: one spec and one plan per phase |
 
-Score and reasoning live only in `seen`; `matches` joins to them, so the email can never
-report a different score than the one the CV was gated on.
-
-There are **no backups**. `docker compose down -v` or a Docker Desktop factory reset
-destroys the history permanently. The agent itself recovers — it just forgets.
-
----
-
-## How truthfulness is enforced
-
-Claude does the judging and the drafting. Nothing else is delegated to it.
-
-- **`prepare_resume`** gates every draft in code: fit threshold, invented-skills check,
-  entry coverage, length budget. It returns the exact Canva operations and writes nothing.
-- **A PreToolUse hook** inspects what is genuinely about to be written to Canva. The agent
-  makes the MCP calls itself, so this — not `prepare_resume` — is the real boundary.
-- **A PostToolUse hook** reads back the actual geometry to confirm nothing overflowed the
-  page and the text really landed. Canva reports `success` for replacements that matched
-  nothing, so results are never trusted on their own.
-
-The agent has no Bash, Read, Write, WebFetch or Agent tools. A failure cannot degrade into
-hand-parsing.
-
----
-
-## Project structure
-
-```
-src/
-  config.py       tunable settings, paths, measured limits
-  agent.py        the workflow prompt, SDK options, hooks — one autonomous session
-  tools.py        the in-process MCP tools the agent may call
-  tooling.py      everything those tools actually do; the payload reducer
-  hooks.py        payload reduction + the Canva write guard
-  canva.py        element parsing, capacity maths, overflow detection
-  db.py           every database access — no SQL lives anywhere else
-  mailer.py       renders and sends the daily digest
-  cli.py          the `jobs` command: setup, run, pdf; preflight and run logging
-  scheduling.py   Task Scheduler XML and registration
-  jobs.py         normalises raw scraper JSON
-  resume.py       parses base_cv.md
-  tailoring.py    truthfulness guards
-  render.py       PDF filenames
-schema.sql        the three tables
-docker-compose.yml
-logs/             one file per day, written by every run (gitignored)
-tests/            the suite; database tests use a real throwaway Postgres
-docs/             design specs and implementation plans
-```
-
-Run the tests with `.venv/Scripts/pytest`. They skip the database tests with a clear
-message if Docker is not running.
-
----
-
-## Tuning
-
-All in `src/config.py`: the five role queries, `MAX_ITEMS_PER_QUERY`, `FIT_THRESHOLD` (the
-score a job needs to earn a CV), `POSTED_LIMIT` (the search window, `24h` for daily),
-`EXPERIENCE_LEVELS`, `LOCATION_KEYWORD`, and `SCHEDULE_TIME`.
-
-A normal day costs roughly $1.50–2.50, mostly Claude, plus about $0.12 on Monid.
-
----
-
-## What it does NOT do
-
-No auto-apply, no cover letters, no ranking beyond the fit score. Canva has no delete API,
-so per-run designs accumulate and need occasional manual cleanup. A failed run is a lost
-day: transient source errors retry inside the run, but the search window is never widened
-afterwards to catch up.
+A normal day costs roughly **$1.50–2.50** in Claude plus about **$0.12** on Monid. Everything
+tunable — role queries, fit threshold, search window — lives in
+[`src/jobsearch/config.py`](src/jobsearch/config.py).
