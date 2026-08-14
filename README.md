@@ -10,8 +10,12 @@ It stops at "here's a tailored CV worth sending." It does **not** apply for you.
 
 ## What happens each morning
 
-Windows Task Scheduler runs `jobs run` at 09:00 — waking the laptop if it is asleep and
-plugged in, otherwise running the moment you next log in. The agent then:
+Windows Task Scheduler runs `jobs run` at 09:00 — waking the laptop if it is asleep,
+otherwise running the moment you next log in. `jobs run` then **starts its own
+dependencies**: Docker Desktop if its daemon is not answering, then the database
+container. It does not merely wait for them, because on this machine nothing else starts
+them (Docker Desktop's own autostart is off, and a 9am run seven minutes after a reboot
+found no database at all). The agent then:
 
 1. **Searches** LinkedIn (via Monid → Apify's harvestapi scraper) for five role types in
    Israel, entry-level, posted in the last 24 hours.
@@ -85,6 +89,25 @@ jobs run              # start a run by hand
 The digest carries no attachments — `jobs pdf <id>` is how a CV gets back out of the
 database. The id is in the email.
 
+### When a morning goes wrong
+
+Every run tees its output to `logs/run-YYYY-MM-DD.log`. A scheduled task's console closes
+with the process, so without this an unattended failure leaves nothing behind — and a
+preflight failure leaves no `runs` row either, because it dies before one exists. Read the
+log first; it is the only record of the mornings you were not watching.
+
+If the log for a morning does not exist at all, the task never started. Check the schedule
+itself:
+
+```powershell
+Get-ScheduledTaskInfo JobSearchAgent        # LastRunTime, LastResult
+powercfg /query SCHEME_CURRENT SUB_SLEEP RTCWAKE   # both indexes must be 0x1
+```
+
+Wake timers must be enabled on **battery** as well as AC. Disabled on battery is the
+Windows default, and it silently turns `WakeToRun` into dead weight the moment you unplug —
+the task then waits for your next login rather than waking the machine.
+
 ---
 
 ## Where the data lives
@@ -136,7 +159,7 @@ src/
   canva.py        element parsing, capacity maths, overflow detection
   db.py           every database access — no SQL lives anywhere else
   mailer.py       renders and sends the daily digest
-  cli.py          the `jobs` command: setup, run, pdf
+  cli.py          the `jobs` command: setup, run, pdf; preflight and run logging
   scheduling.py   Task Scheduler XML and registration
   jobs.py         normalises raw scraper JSON
   resume.py       parses base_cv.md
@@ -144,6 +167,7 @@ src/
   render.py       PDF filenames
 schema.sql        the three tables
 docker-compose.yml
+logs/             one file per day, written by every run (gitignored)
 tests/            the suite; database tests use a real throwaway Postgres
 docs/             design specs and implementation plans
 ```

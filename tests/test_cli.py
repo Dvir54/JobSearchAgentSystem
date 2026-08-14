@@ -1,3 +1,5 @@
+from datetime import datetime
+
 import pytest
 
 import cli
@@ -6,9 +8,24 @@ import db
 import tooling
 
 
+def _boom(message):
+    """A stand-in that fails the way the real thing did."""
+    def raise_it(*args, **kwargs):
+        raise RuntimeError(message)
+    return raise_it
+
+
+@pytest.fixture(autouse=True)
+def _log_to_tmp(tmp_path, monkeypatch):
+    """Never write run logs into the checkout from a test."""
+    monkeypatch.setattr(config, "LOG_DIR", tmp_path / "logs")
+
+
 @pytest.fixture
 def wired(pg, monkeypatch):
     """cli wired to the test database with the network stubbed out."""
+    monkeypatch.setattr(cli, "start_docker_desktop", lambda: None)
+    monkeypatch.setattr(cli, "start_container", lambda: None)
     monkeypatch.setattr(cli, "wait_for_database", lambda: None)
     monkeypatch.setattr(db, "session", lambda: pg)
     monkeypatch.setattr(tooling, "_db_conn", lambda: pg)
@@ -179,6 +196,7 @@ def test_scheduled_command_points_at_the_venv_executable():
 
 
 def _setup_wired(pg, monkeypatch):
+    monkeypatch.setattr(cli, "start_docker_desktop", lambda: None)
     monkeypatch.setattr(cli, "start_container", lambda: None)
     monkeypatch.setattr(cli, "wait_for_database", lambda: None)
     monkeypatch.setattr(db, "session", lambda: pg)
@@ -231,13 +249,21 @@ def test_setup_stops_when_the_app_password_is_wrong(pg, monkeypatch, capsys):
 
 def test_setup_reports_a_container_that_will_not_start(pg, monkeypatch, capsys):
     monkeypatch.setattr(db, "session", lambda: pg)
-
-    def down():
-        raise RuntimeError("Is Docker Desktop running?")
-
-    monkeypatch.setattr(cli, "start_container", down)
+    monkeypatch.setattr(cli, "start_docker_desktop", lambda: None)
+    monkeypatch.setattr(cli, "start_container",
+                        _boom("Is Docker Desktop running?"))
     assert cli.command_setup() == 1
     assert "Docker Desktop" in capsys.readouterr().out
+
+
+def test_setup_also_starts_docker_desktop(pg, monkeypatch, capsys):
+    # Unlike `run`, setup is watched by a human — so here a Docker that will not
+    # start is fatal and named, rather than left for wait_for_database to report.
+    _setup_wired(pg, monkeypatch)
+    monkeypatch.setattr(cli, "start_docker_desktop",
+                        _boom("Docker Desktop never became ready"))
+    assert cli.command_setup() == 1
+    assert "never became ready" in capsys.readouterr().out
 
 
 def test_pdf_writes_the_stored_bytes_to_the_current_directory(pg, monkeypatch,
@@ -326,3 +352,133 @@ def test_configure_console_survives_a_stream_without_reconfigure(monkeypatch):
     monkeypatch.setattr(cli.sys, "stdout", object())
     monkeypatch.setattr(cli.sys, "stderr", object())
     cli._configure_console()
+
+
+# --- preflight brings the database up instead of waiting for it ---
+
+def test_run_starts_docker_before_waiting_for_the_database(wired, monkeypatch):
+    """Regression: on 2026-08-14 the 9am task fired seven minutes after a reboot,
+    found Docker Desktop not running (its AutoStart is off), waited two minutes
+    for a container nobody was going to start, and died before writing a run row.
+    Waiting is not enough — nothing else on this machine starts the database."""
+    order = []
+    monkeypatch.setattr(cli, "start_docker_desktop", lambda: order.append("docker"))
+    monkeypatch.setattr(cli, "start_container", lambda: order.append("compose"))
+    monkeypatch.setattr(cli, "wait_for_database", lambda: order.append("wait"))
+    monkeypatch.setattr(cli, "_drive_session",
+                        lambda: {"summary": "", "cost": 0.0, "is_error": False})
+    _stats(monkeypatch, fetched=0, dropped_seen=0, examined=0, matched=0)
+
+    assert cli.command_run() == 0
+    assert order == ["docker", "compose", "wait"]
+
+
+def test_a_failed_recovery_does_not_stop_a_reachable_database(wired, monkeypatch):
+    """Docker may be absent, or the database may be served some other way. The
+    recovery is an attempt, not a precondition: whether the run proceeds is
+    decided by Postgres answering."""
+    monkeypatch.setattr(cli, "start_docker_desktop", _boom("no Docker Desktop"))
+    monkeypatch.setattr(cli, "start_container", _boom("compose failed"))
+    monkeypatch.setattr(cli, "wait_for_database", lambda: None)
+    monkeypatch.setattr(cli, "_drive_session",
+                        lambda: {"summary": "", "cost": 0.0, "is_error": False})
+    _stats(monkeypatch, fetched=0, dropped_seen=0, examined=0, matched=0)
+
+    assert cli.command_run() == 0
+
+
+def test_preflight_reports_the_database_error_not_the_docker_one(wired, monkeypatch):
+    # "could not start Docker" is a symptom; "Postgres never answered" is the
+    # fact the operator needs, and it names the port and the fix.
+    monkeypatch.setattr(cli, "start_docker_desktop", _boom("no Docker Desktop"))
+    monkeypatch.setattr(cli, "wait_for_database",
+                        _boom("Postgres at :5433 did not answer"))
+    assert cli.command_run() == 1
+    assert "Postgres at :5433 did not answer" in wired["subject"]
+
+
+def test_start_docker_desktop_does_nothing_when_the_daemon_answers(monkeypatch):
+    monkeypatch.setattr(cli, "docker_is_running", lambda: True)
+    launched = []
+    monkeypatch.setattr(cli.subprocess, "Popen",
+                        lambda *a, **k: launched.append(a))
+    cli.start_docker_desktop()
+    assert launched == []
+
+
+def test_start_docker_desktop_launches_it_and_waits_for_the_daemon(monkeypatch):
+    # Cold-starting Docker Desktop takes 30-90s, so launching is not enough:
+    # `docker compose up` against a daemon that is still booting just fails.
+    answers = iter([False, False, True])
+    monkeypatch.setattr(cli, "docker_is_running", lambda: next(answers))
+    monkeypatch.setattr(cli.time, "sleep", lambda seconds: None)
+    launched = []
+    monkeypatch.setattr(cli.subprocess, "Popen",
+                        lambda *a, **k: launched.append(a))
+    cli.start_docker_desktop(attempts=5, delay=0)
+    assert launched
+
+
+def test_start_docker_desktop_gives_up_with_a_readable_error(monkeypatch):
+    monkeypatch.setattr(cli, "docker_is_running", lambda: False)
+    monkeypatch.setattr(cli.time, "sleep", lambda seconds: None)
+    monkeypatch.setattr(cli.subprocess, "Popen", lambda *a, **k: None)
+    with pytest.raises(RuntimeError) as excinfo:
+        cli.start_docker_desktop(attempts=2, delay=0)
+    assert "Docker" in str(excinfo.value)
+
+
+def test_start_docker_desktop_names_a_missing_executable(monkeypatch, tmp_path):
+    monkeypatch.setattr(cli, "docker_is_running", lambda: False)
+    monkeypatch.setattr(cli, "DOCKER_DESKTOP", tmp_path / "Docker Desktop.exe")
+    with pytest.raises(RuntimeError) as excinfo:
+        cli.start_docker_desktop(attempts=1, delay=0)
+    assert "Docker Desktop.exe" in str(excinfo.value)
+
+
+# --- an unattended run leaves a log behind ---
+
+def test_log_path_is_one_file_per_day(monkeypatch, tmp_path):
+    monkeypatch.setattr(config, "LOG_DIR", tmp_path)
+    assert cli.log_path(datetime(2026, 8, 15, 9, 0)).name == "run-2026-08-15.log"
+
+
+def test_a_run_writes_its_progress_to_the_log(wired, monkeypatch):
+    monkeypatch.setattr(cli, "_drive_session",
+                        lambda: {"summary": "", "cost": 0.0, "is_error": False})
+    _stats(monkeypatch, fetched=7, dropped_seen=0, examined=0, matched=0)
+    assert cli.command_run() == 0
+    written = cli.log_path().read_text(encoding="utf-8")
+    assert "started" in written
+    assert "exit 0" in written
+
+
+def test_a_preflight_failure_is_written_to_the_log(wired, monkeypatch):
+    """The 2026-08-14 failure left nothing behind: it died before the run row
+    existed, and a scheduled task's console closes with the process. The whole
+    diagnosis had to be inferred from a Windows exit code."""
+    monkeypatch.setattr(cli, "wait_for_database",
+                        _boom("Postgres at :5433 did not answer"))
+    assert cli.command_run() == 1
+    written = cli.log_path().read_text(encoding="utf-8")
+    assert "Postgres at :5433 did not answer" in written
+    assert "exit 1" in written
+
+
+def test_the_log_does_not_swallow_the_real_stderr(wired, monkeypatch, capsys):
+    monkeypatch.setattr(cli, "_drive_session",
+                        lambda: {"summary": "", "cost": 0.0, "is_error": False})
+    _stats(monkeypatch, fetched=0, dropped_seen=0, examined=0, matched=0)
+    cli.command_run()
+    # Running `jobs run` by hand must still show its progress on the console.
+    assert "started" in capsys.readouterr().err
+
+
+def test_a_log_that_cannot_be_opened_does_not_break_the_run(wired, monkeypatch,
+                                                             tmp_path):
+    # Logging is a diagnostic aid. It must never become a new way for 9am to fail.
+    monkeypatch.setattr(cli, "log_path", _boom("read-only filesystem"))
+    monkeypatch.setattr(cli, "_drive_session",
+                        lambda: {"summary": "", "cost": 0.0, "is_error": False})
+    _stats(monkeypatch, fetched=0, dropped_seen=0, examined=0, matched=0)
+    assert cli.command_run() == 0

@@ -5,10 +5,12 @@ the agent's own judgement. This module's job is the run's shape: preflight, open
 the run row, drive the session, close the row, report by email.
 """
 import argparse
+import contextlib
 import os
 import subprocess
 import sys
 import time
+from datetime import datetime
 from pathlib import Path
 
 from dotenv import load_dotenv
@@ -36,12 +38,121 @@ def _configure_console():
             pass          # captured or already-wrapped streams: nothing to do
 
 
-def wait_for_database(attempts=20, delay=1.5):
-    """Block until Postgres answers, or give up with a readable message.
+class _Tee:
+    """Writes everything to every stream it was given.
 
-    Docker Desktop starts at login and can lag well past 09:00 on a cold boot,
-    so this waits rather than failing on the first refused connection.
+    Flushes on every write: a run killed mid-flight — which is exactly what
+    happened on 2026-08-14 — must still leave behind everything it had said up
+    to that point. A stream that refuses a write is dropped silently rather than
+    allowed to take down the run.
     """
+
+    def __init__(self, *streams):
+        self._streams = streams
+
+    def write(self, text):
+        for stream in self._streams:
+            try:
+                stream.write(text)
+                stream.flush()
+            except Exception:                     # noqa: BLE001 - see docstring
+                pass
+        return len(text)
+
+    def flush(self):
+        for stream in self._streams:
+            try:
+                stream.flush()
+            except Exception:                     # noqa: BLE001 - see docstring
+                pass
+
+
+def log_path(when=None):
+    """One log file per day, named for the morning it belongs to.
+
+    Per-day rather than one rolling file: a morning's run is findable by date,
+    and old runs age out by filename instead of growing without bound.
+    """
+    stamp = (when or datetime.now()).strftime("%Y-%m-%d")
+    return config.LOG_DIR / f"run-{stamp}.log"
+
+
+@contextlib.contextmanager
+def tee_stderr_to_log():
+    """Duplicate stderr into today's log for the duration of the block.
+
+    A scheduled task's console closes with the process, so an unattended failure
+    otherwise leaves no trace whatsoever: on 2026-08-14 the 9am run died in
+    preflight, before the run row existed, and the only evidence left anywhere on
+    the machine was a Windows exit code.
+
+    Logging is a diagnostic aid and must never become a new way for 9am to fail,
+    so a log that cannot be opened is reported and skipped.
+    """
+    try:
+        path = log_path()
+        path.parent.mkdir(parents=True, exist_ok=True)
+        handle = open(path, "a", encoding="utf-8", errors="replace")
+    except Exception as exc:                      # noqa: BLE001 - see docstring
+        print(f"[run] could not open the log: {exc}", file=sys.stderr)
+        yield
+        return
+
+    original = sys.stderr
+    sys.stderr = _Tee(original, handle)
+    try:
+        print(f"\n[run] ===== {datetime.now():%Y-%m-%d %H:%M:%S} =====",
+              file=sys.stderr)
+        yield
+    finally:
+        sys.stderr = original
+        handle.close()
+
+
+DOCKER_DESKTOP = Path(r"C:\Program Files\Docker\Docker\Docker Desktop.exe")
+
+
+def docker_is_running():
+    """True when the Docker daemon answers. `docker info` fails fast if not."""
+    try:
+        return subprocess.run(["docker", "info"], capture_output=True,
+                              text=True).returncode == 0
+    except OSError:
+        return False                              # docker not on PATH at all
+
+
+def start_docker_desktop(attempts=40, delay=3):
+    """Launch Docker Desktop if its daemon is not answering, and wait for it.
+
+    Docker Desktop does not start itself on this machine (AutoStart is off), and
+    on 2026-08-14 the 9am task fired seven minutes after a reboot into a machine
+    with no daemon and no database. Nothing else was ever going to start it.
+
+    Launching is not sufficient on its own: a cold start takes 30-90 seconds, and
+    `docker compose up` against a daemon that is still booting simply fails.
+    """
+    if docker_is_running():
+        return
+    if not DOCKER_DESKTOP.exists():
+        raise RuntimeError(
+            f"The Docker daemon is not answering and {DOCKER_DESKTOP} does not "
+            f"exist, so there is nothing to start.")
+
+    print(f"[run] starting Docker Desktop ({DOCKER_DESKTOP.name})...",
+          file=sys.stderr)
+    subprocess.Popen([str(DOCKER_DESKTOP)])
+    for _ in range(attempts):
+        time.sleep(delay)
+        if docker_is_running():
+            print("[run] the Docker daemon is up", file=sys.stderr)
+            return
+    raise RuntimeError(
+        f"Docker Desktop was started but its daemon did not answer within "
+        f"{attempts * delay}s.")
+
+
+def wait_for_database(attempts=20, delay=1.5):
+    """Block until Postgres answers, or give up with a readable message."""
     last = None
     for _ in range(attempts):
         try:
@@ -54,6 +165,23 @@ def wait_for_database(attempts=20, delay=1.5):
         f"Postgres at {config.DATABASE_URL} did not answer after "
         f"{attempts} attempts ({last}). Is Docker Desktop running? "
         f"Try `docker compose up -d`.")
+
+
+def ensure_database():
+    """Bring the database up, then wait for it to answer.
+
+    The recovery is an attempt, not a precondition. Docker may be absent or the
+    database served some other way, so a failure to start it is reported and then
+    left to wait_for_database to adjudicate: what decides whether the run can
+    proceed is Postgres answering, and its error is the one worth emailing.
+    """
+    try:
+        start_docker_desktop()
+        start_container()
+    except Exception as exc:                      # noqa: BLE001 - see docstring
+        print(f"[run] could not start the database ({exc}); "
+              f"trying to connect anyway", file=sys.stderr)
+    wait_for_database()
 
 
 def _drive_session():
@@ -92,11 +220,21 @@ def _preflight_failure_run(error):
 
 
 def command_run():
-    """One day's work. Exit 0 on ok/empty, 1 on failed."""
-    load_dotenv()
+    """One day's work. Exit 0 on ok/empty, 1 on failed.
 
+    Everything it prints is teed to today's log, because the caller that matters
+    is Task Scheduler and its console is gone the moment the process ends.
+    """
+    load_dotenv()
+    with tee_stderr_to_log():
+        code = _execute_run()
+        print(f"[run] exit {code}", file=sys.stderr)
+        return code
+
+
+def _execute_run():
     try:
-        wait_for_database()
+        ensure_database()
     except Exception as exc:                      # noqa: BLE001 - report and stop
         # The database is the thing that is broken, so there is nowhere to record
         # this. Email and the exit code are all there is.
@@ -177,6 +315,10 @@ def command_setup():
 
     print("Starting Postgres...")
     try:
+        # Fatal here, unlike in `run`: setup is watched by a human who can act on
+        # "Docker Desktop never became ready" far better than on a connection
+        # timeout reported two minutes later.
+        start_docker_desktop()
         start_container()
         wait_for_database()
     except Exception as exc:                      # noqa: BLE001 - report and stop
