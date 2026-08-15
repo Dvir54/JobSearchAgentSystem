@@ -71,6 +71,10 @@ _TASK_XML = """<?xml version="1.0" encoding="UTF-16"?>
     <DisallowStartIfOnBatteries>false</DisallowStartIfOnBatteries>
     <StopIfGoingOnBatteries>false</StopIfGoingOnBatteries>
     <MultipleInstancesPolicy>IgnoreNew</MultipleInstancesPolicy>
+    <!-- 4 = NORMAL_PRIORITY_CLASS. Task Scheduler defaults to 7 (below normal),
+         which throttles CPU and I/O; under it the agent's cold Node start blew
+         through the SDK's 60s initialize timeout on 2026-08-15. -->
+    <Priority>4</Priority>
     <ExecutionTimeLimit>PT2H</ExecutionTimeLimit>
     <Enabled>true</Enabled>
   </Settings>
