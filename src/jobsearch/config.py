@@ -160,3 +160,12 @@ SCHEDULE_TIME = "09:00:00"
 # so `started_at::date` disagrees with the local date for the first hours of
 # every local day — long enough to matter for a 09:00 job.
 LOCAL_TIMEZONE = "Asia/Jerusalem"
+
+# How long the SDK waits for the `claude` CLI to answer its initialize handshake.
+# The SDK default is 60s, which is ample from a terminal and was NOT enough from
+# Task Scheduler: the first task-launched run to reach the agent died on
+# "Control request timeout: initialize" while the same binary succeeded manually
+# minutes later. A scheduled task runs at below-normal priority and starts the
+# CLI cold with MCP servers to connect. Three minutes costs nothing on a healthy
+# run — it is a ceiling, not a delay.
+SDK_LOAD_TIMEOUT_MS = 180_000

@@ -85,6 +85,14 @@ def test_the_daily_trigger_survives_alongside_the_others():
     assert len(root.findall(".//t:Triggers/*", NS)) == 3
 
 
+def test_task_runs_at_normal_priority():
+    """Task Scheduler defaults to priority 7 (below normal), which throttles CPU
+    and I/O. The agent's first act is a cold Node start plus MCP connections, and
+    under that throttle it exceeded the SDK's 60s initialize timeout — the same
+    work took seconds from a terminal. 4 is NORMAL_PRIORITY_CLASS."""
+    assert _xml().find(".//t:Settings/t:Priority", NS).text == "4"
+
+
 def test_task_runs_with_the_interactive_token():
     # InteractiveToken means no stored password. Waking from sleep keeps the
     # session logged on, so this is enough for the wake case.

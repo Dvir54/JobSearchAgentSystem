@@ -289,6 +289,33 @@ Follow this workflow exactly:
 INSTRUCTIONS = WORKFLOW
 
 
+def _log_cli_stderr(line):
+    """The CLI's own diagnostics, into our run log.
+
+    Without this a startup failure arrives as a bare "Control request timeout:
+    initialize" and everything the CLI said about why dies with the console —
+    exactly what happened to the first task-launched run, on 2026-08-15.
+    """
+    print(f"[cli] {line.rstrip()}", file=sys.stderr)
+
+
+class _LiveStderr:
+    """A stderr proxy that resolves sys.stderr at WRITE time.
+
+    ClaudeAgentOptions.debug_stderr defaults to the sys.stderr object captured
+    when the dataclass was defined — at import, long before cli.py installs the
+    run log's tee. SDK debug output therefore went to the original console and
+    never reached the log, which is why that first failure left one line and no
+    explanation.
+    """
+
+    def write(self, text):
+        return sys.stderr.write(text)
+
+    def flush(self):
+        sys.stderr.flush()
+
+
 def build_options() -> "ClaudeAgentOptions":
     """Configure the one-shot autonomous session.
 
@@ -371,6 +398,13 @@ def build_options() -> "ClaudeAgentOptions":
         # text+HTML descriptions) can exceed the SDK's 1MB default message buffer;
         # raise it so the completed monid_get_run result fits through the pipe.
         max_buffer_size=10 * 1024 * 1024,  # 10MB
+        # Both of these exist because of the 2026-08-15 task-launched failure:
+        # the CLI's stderr now lands in the run log, and the SDK's 60s default
+        # for the initialize handshake was not enough for a cold Node start
+        # under Task Scheduler's below-normal priority.
+        stderr=_log_cli_stderr,
+        debug_stderr=_LiveStderr(),
+        load_timeout_ms=config.SDK_LOAD_TIMEOUT_MS,
         # The raw harvestapi scrape (~1.1MB, ~284K tokens) never reaches the
         # model: this hook reduces it in-process to the jobs we actually need.
         hooks={

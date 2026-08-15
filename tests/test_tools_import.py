@@ -96,6 +96,40 @@ def test_agent_still_denies_the_builtin_tools(monkeypatch):
         assert denied in opts.disallowed_tools
 
 
+def test_the_cli_stderr_is_captured_into_our_log(monkeypatch, capsys):
+    """2026-08-15: the first task-launched run ever to reach the agent failed
+    with a bare "Control request timeout: initialize" and nothing else. The CLI
+    almost certainly explained itself on stderr, into a console that closed with
+    the process."""
+    monkeypatch.setenv("MONID_API_KEY", "dummy")
+    from jobsearch.agent import session
+    opts = session.build_options()
+    assert callable(opts.stderr)
+    opts.stderr("EACCES: permission denied")
+    assert "EACCES" in capsys.readouterr().err
+
+
+def test_debug_stderr_follows_the_live_stderr(monkeypatch, capsys):
+    """ClaudeAgentOptions.debug_stderr defaults to the sys.stderr object
+    captured when the dataclass was DEFINED — i.e. at import, before cli.py
+    installs the run log's tee. SDK debug output therefore bypassed the log
+    completely. This proxy resolves sys.stderr at write time instead."""
+    monkeypatch.setenv("MONID_API_KEY", "dummy")
+    from jobsearch.agent import session
+    opts = session.build_options()
+    opts.debug_stderr.write("late-bound line\n")
+    assert "late-bound" in capsys.readouterr().err
+
+
+def test_the_initialize_timeout_is_generous(monkeypatch):
+    """The SDK's default is 60s. A scheduled task runs at below-normal priority
+    and starts the CLI cold, with MCP servers to connect; 60s was not enough and
+    the run died before the agent existed."""
+    monkeypatch.setenv("MONID_API_KEY", "dummy")
+    from jobsearch.agent import session
+    assert session.build_options().load_timeout_ms >= 120_000
+
+
 def test_the_pinned_search_recipe_carries_the_body_envelope():
     """The endpoint takes the search fields inside `body`. The prompt used to hand
     over the bare body as `input`, so monid_run rejected the first call of every
