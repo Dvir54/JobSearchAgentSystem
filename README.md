@@ -8,7 +8,7 @@ It stops at "here's a tailored CV worth sending." It does **not** apply for you.
 
 ```mermaid
 flowchart LR
-  T["09:00<br/>Task Scheduler"] --> D["start Docker<br/>+ Postgres"]
+  T["09:00 · wake · logon<br/>whichever comes first"] --> D["start Docker<br/>+ Postgres"]
   D --> S["search LinkedIn<br/>via Monid"]
   S --> R["reduce in-process<br/>dedupe · Israel · already-seen"]
   R --> J{"junior?<br/>fit ≥ 70?"}
@@ -70,13 +70,18 @@ wake the machine. Safe to re-run.
 | Command | What it does |
 |---|---|
 | `jobs setup` | Install everything, once. Idempotent — re-running repairs a partial install. |
-| `jobs run` | One day's work. The 09:00 task calls this; run it by hand any time. |
+| `jobs run` | One day's work. The scheduled task calls this; add `--force` to re-run a finished day. |
 | `jobs pdf <id>` | Write one stored CV to `output/<run date>/` and open it. |
 
 The digest carries **no attachments**, so `jobs pdf <id>` is how a CV gets back out of the
 database. The id is in the email.
 
 ## The daily contract
+
+The run starts at **09:00, or when the laptop wakes, or at logon — whichever happens first**,
+and a guard makes sure it does the work only once per day. One moment a day was not enough:
+a laptop left on battery hibernates in the early hours, and a hibernating machine is
+electrically off, so nothing can wake it for a 09:00 timer.
 
 You get **exactly one email every morning** — the matches, "nothing today", or the failure.
 

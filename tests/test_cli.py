@@ -168,6 +168,76 @@ def test_a_failing_failure_email_does_not_mask_the_original_error(wired,
         assert "502" in cur.fetchone()[0]
 
 
+def test_a_second_run_the_same_day_does_no_work(wired, monkeypatch, pg):
+    """The guard that makes the resume and logon triggers safe.
+
+    Those triggers fire every time the laptop wakes or the operator logs in —
+    several times a day. Without this, that means several searches and several
+    digest emails. With it, extra triggers are free: whichever fires first does
+    the day's work and the rest cost one query.
+    """
+    run_id = db.start_run("24h", pg)
+    db.finish_run(run_id, fetched=1, skipped_seen=0, examined=0, matched=0,
+                  status="ok", conn=pg)
+
+    ran = []
+    monkeypatch.setattr(cli, "_drive_session", lambda: ran.append(1))
+
+    assert cli.command_run() == 0
+    assert ran == []
+    assert wired == {}                      # and no second email
+    with pg.cursor() as cur:
+        cur.execute("SELECT count(*) FROM runs")
+        assert cur.fetchone()[0] == 1       # no second run row either
+
+
+def test_a_failed_earlier_run_does_not_block_a_retry(wired, monkeypatch, pg):
+    # A run that died at 09:00 must get another chance when the machine wakes.
+    run_id = db.start_run("24h", pg)
+    db.fail_run(run_id, "Postgres did not answer", conn=pg)
+
+    monkeypatch.setattr(cli, "_drive_session",
+                        lambda: {"summary": "", "cost": 0.0, "is_error": False})
+    _stats(monkeypatch, fetched=3, dropped_seen=0, examined=0, matched=0)
+
+    assert cli.command_run() == 0
+    assert wired["subject"] == "No new matches today"
+
+
+def test_force_overrides_the_guard(wired, monkeypatch, pg):
+    # `jobs run --force` is how the operator re-runs by hand on purpose.
+    run_id = db.start_run("24h", pg)
+    db.finish_run(run_id, fetched=1, skipped_seen=0, examined=0, matched=0,
+                  status="ok", conn=pg)
+
+    monkeypatch.setattr(cli, "_drive_session",
+                        lambda: {"summary": "", "cost": 0.0, "is_error": False})
+    _stats(monkeypatch, fetched=3, dropped_seen=0, examined=0, matched=0)
+
+    assert cli.command_run(force=True) == 0
+    with pg.cursor() as cur:
+        cur.execute("SELECT count(*) FROM runs")
+        assert cur.fetchone()[0] == 2
+
+
+def test_the_skip_is_recorded_in_the_log(wired, monkeypatch, pg):
+    # Otherwise a morning with no email and no run row looks like a failure.
+    run_id = db.start_run("24h", pg)
+    db.finish_run(run_id, fetched=1, skipped_seen=0, examined=0, matched=0,
+                  status="ok", conn=pg)
+    monkeypatch.setattr(cli, "_drive_session", lambda: None)
+    cli.command_run()
+    assert "already" in cli.log_path().read_text(encoding="utf-8").lower()
+
+
+def test_main_passes_force_through(monkeypatch):
+    seen = {}
+    monkeypatch.setattr(cli, "command_run",
+                        lambda force=False: seen.update(force=force) or 0)
+    assert cli.main(["run", "--force"]) == 0
+    assert seen["force"] is True
+
+
 def test_missing_env_keys_names_every_absent_key(monkeypatch):
     for key in cli.REQUIRED_ENV_KEYS:
         monkeypatch.delenv(key, raising=False)
@@ -302,7 +372,8 @@ def test_pdf_reports_an_unknown_job_without_creating_a_directory(pg, monkeypatch
 def test_main_dispatches_each_command(monkeypatch):
     called = []
     monkeypatch.setattr(cli, "command_setup", lambda: called.append("setup") or 0)
-    monkeypatch.setattr(cli, "command_run", lambda: called.append("run") or 0)
+    monkeypatch.setattr(cli, "command_run",
+                        lambda force=False: called.append("run") or 0)
     monkeypatch.setattr(cli, "command_pdf",
                         lambda job_id: called.append(f"pdf:{job_id}") or 0)
     assert cli.main(["setup"]) == 0
@@ -313,7 +384,7 @@ def test_main_dispatches_each_command(monkeypatch):
 
 def test_main_propagates_a_failing_exit_code(monkeypatch):
     # Task Scheduler reads this; a run that failed must not look successful.
-    monkeypatch.setattr(cli, "command_run", lambda: 1)
+    monkeypatch.setattr(cli, "command_run", lambda force=False: 1)
     assert cli.main(["run"]) == 1
 
 

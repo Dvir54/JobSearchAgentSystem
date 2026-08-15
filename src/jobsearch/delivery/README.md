@@ -48,11 +48,38 @@ database row.
 
 **If a morning's log file does not exist at all, the task never ran.**
 
-## Scheduling, and the two settings that silently defeat it
+## Three triggers, because one moment a day is not enough
 
-The task XML is generated rather than built with `schtasks /SC DAILY`, because `WakeToRun`
-and `StartWhenAvailable` cannot be expressed on that command line. It runs with
-`InteractiveToken`, so no password is stored.
+| Trigger | When | Delay |
+|---|---|---|
+| Daily | 09:00 | — |
+| Resume | Power-Troubleshooter event 1 — any wake from sleep or hibernation | 1 min |
+| Logon | This user signs in | 2 min |
+
+Whichever fires first does the day's work; the rest cost one database query. The delays let
+Wi-Fi and the Docker daemon come up first.
+
+**Why the resume trigger exists.** On 2026-08-15 the machine hibernated at 06:12 — it has no
+S3 sleep, only Modern Standby, and on battery Windows hibernates once the standby budget is
+spent (at 92% charge; this is about elapsed standby time, not charge level). A hibernating
+machine is electrically off, so `WakeToRun` could not reach it and 09:00 was missed. And
+`StartWhenAvailable` did not rescue it: **it re-checks missed runs after a boot, and a resume
+from hibernation is not a boot.** Six hours after the machine came back,
+`NumberOfMissedRuns` was still 1 and nothing had run.
+
+**The guard is not optional.** These triggers fire several times a day. `jobs run` calls
+`db.successful_run_today()` before doing anything and exits immediately if today is already
+done — otherwise every lid-open would mean another search and another email. `jobs run
+--force` overrides it. A *failed* run deliberately does not count as done, so a run that died
+at 09:00 gets another chance when the machine wakes.
+
+**A `LogonTrigger` must name a `UserId`.** Without one it means *any* user logs on, which
+Windows treats as privileged: `schtasks` rejects the whole task with `ERROR: Access is
+denied`. Naming the account keeps registration possible without elevation.
+
+The task XML is generated rather than built with `schtasks /SC DAILY`, because neither these
+triggers nor `WakeToRun` and `StartWhenAvailable` can be expressed on that command line. It
+runs with `InteractiveToken`, so no password is stored.
 
 ```powershell
 Get-ScheduledTaskInfo JobSearchAgent                 # LastRunTime, LastResult

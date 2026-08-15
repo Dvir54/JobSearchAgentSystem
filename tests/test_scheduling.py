@@ -30,6 +30,61 @@ def test_task_catches_up_after_a_missed_start():
     assert _xml().find(".//t:Settings/t:StartWhenAvailable", NS).text == "true"
 
 
+def test_task_also_triggers_when_the_machine_wakes():
+    """The trigger that makes this a daily agent on a laptop.
+
+    Measured 2026-08-15: this machine has no S3 sleep, only Modern Standby, and
+    on battery Windows hibernates it once the standby budget is spent — 06:12
+    that morning, with the battery at 92%. A hibernating machine is electrically
+    off, so WakeToRun cannot reach it and 09:00 was missed. StartWhenAvailable
+    did not rescue it either: it re-checks missed runs after a BOOT, and a
+    resume from hibernation is not a boot. Six hours after the machine came
+    back, NumberOfMissedRuns was still 1 and nothing had run.
+
+    Windows logs Power-Troubleshooter event 1 on every resume — it fired at
+    09:56:28 that morning, six seconds after the machine came back. Subscribing
+    to it is what makes "I opened my laptop" count as "power on".
+    """
+    subscription = _xml().find(".//t:EventTrigger/t:Subscription", NS).text
+    assert "Microsoft-Windows-Power-Troubleshooter" in subscription
+    assert "EventID=1" in subscription
+
+
+def test_the_resume_trigger_waits_before_starting():
+    # Wi-Fi and the Docker daemon are not up the instant the screen comes on.
+    delay = _xml().find(".//t:EventTrigger/t:Delay", NS).text
+    assert delay.startswith("PT") and delay != "PT0S"
+
+
+def test_task_also_triggers_at_logon():
+    # Covers a cold boot without waiting on Windows' own catch-up, which took
+    # seven minutes on 2026-08-14.
+    assert _xml().find(".//t:LogonTrigger/t:Enabled", NS).text == "true"
+
+
+def test_the_logon_trigger_names_a_user():
+    """A LogonTrigger with no UserId means ANY user logs on, which Windows
+    treats as a privileged operation: schtasks rejected the first version of
+    this task outright with "ERROR: Access is denied." Naming the account keeps
+    registration possible without elevation."""
+    user_id = _xml().find(".//t:LogonTrigger/t:UserId", NS)
+    assert user_id is not None and user_id.text
+
+
+def test_current_user_includes_the_domain(monkeypatch):
+    monkeypatch.setenv("USERDOMAIN", "DVIR-LAPTOP")
+    monkeypatch.setenv("USERNAME", "dvir")
+    assert scheduling.current_user() == r"DVIR-LAPTOP\dvir"
+
+
+def test_the_daily_trigger_survives_alongside_the_others():
+    # The extra triggers are a safety net, not a replacement: 09:00 is still the
+    # best case, and the only one that happens without the operator present.
+    root = _xml()
+    assert root.find(".//t:CalendarTrigger/t:StartBoundary", NS) is not None
+    assert len(root.findall(".//t:Triggers/*", NS)) == 3
+
+
 def test_task_runs_with_the_interactive_token():
     # InteractiveToken means no stored password. Waking from sleep keeps the
     # session logged on, so this is enough for the wake case.

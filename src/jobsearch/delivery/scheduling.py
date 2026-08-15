@@ -1,13 +1,30 @@
-"""Register the daily 09:00 task with Windows Task Scheduler.
+"""Register the scheduled task with Windows Task Scheduler.
 
-Built from XML rather than `schtasks /Create /SC DAILY`, because the two settings
-that matter most cannot be expressed on the schtasks command line: WakeToRun
-(wake a sleeping laptop) and StartWhenAvailable (run late rather than never).
+Built from XML rather than `schtasks /Create /SC DAILY`, because neither the
+settings that matter (WakeToRun, StartWhenAvailable) nor the extra triggers can
+be expressed on the schtasks command line.
 
-Neither covers a machine that is shut down or hibernated — a timer cannot power on
-a machine that is off — which is exactly why both are set. Plugged in and asleep,
-the run happens at 09:00; otherwise it happens at the next login.
+THREE triggers, because one moment a day is not enough on a laptop:
+
+  09:00 daily   the best case, and the only one that needs nobody present.
+  on resume     Power-Troubleshooter event 1, which Windows logs every time the
+                machine comes back from sleep or hibernation.
+  at logon      a cold boot, without waiting on Windows' own catch-up.
+
+The resume trigger exists because of 2026-08-15. This machine has no S3 sleep,
+only Modern Standby, so on battery Windows hibernates it once the standby budget
+is spent — 06:12 that morning, at 92% charge. A hibernating machine is
+electrically off, so WakeToRun could not reach it and 09:00 was missed.
+StartWhenAvailable did not save it either: it re-checks missed runs after a
+BOOT, and a resume from hibernation is not a boot. Six hours after the machine
+came back, NumberOfMissedRuns was still 1 and nothing had run.
+
+Extra triggers are only safe because `jobs run` skips a day it has already
+finished — see db.successful_run_today. Without that guard, every lid-open would
+mean another search and another email.
 """
+import getpass
+import os
 import subprocess
 import tempfile
 from pathlib import Path
@@ -31,6 +48,16 @@ _TASK_XML = """<?xml version="1.0" encoding="UTF-16"?>
         <DaysInterval>1</DaysInterval>
       </ScheduleByDay>
     </CalendarTrigger>
+    <EventTrigger>
+      <Enabled>true</Enabled>
+      <Delay>PT1M</Delay>
+      <Subscription>&lt;QueryList&gt;&lt;Query Id="0" Path="System"&gt;&lt;Select Path="System"&gt;*[System[Provider[@Name='Microsoft-Windows-Power-Troubleshooter'] and EventID=1]]&lt;/Select&gt;&lt;/Query&gt;&lt;/QueryList&gt;</Subscription>
+    </EventTrigger>
+    <LogonTrigger>
+      <Enabled>true</Enabled>
+      <Delay>PT2M</Delay>
+      <UserId>{user_id}</UserId>
+    </LogonTrigger>
   </Triggers>
   <Principals>
     <Principal id="Author">
@@ -72,7 +99,14 @@ def _split_command(command):
     return executable, arguments.strip()
 
 
-def build_task_xml(command, working_dir, start_time=None):
+def current_user():
+    """DOMAIN\\user for the account the task will run as."""
+    domain = os.environ.get("USERDOMAIN", "")
+    user = os.environ.get("USERNAME") or getpass.getuser()
+    return f"{domain}\\{user}" if domain else user
+
+
+def build_task_xml(command, working_dir, start_time=None, user_id=None):
     """`command` is the full command line; its first token is the executable."""
     executable, arguments = _split_command(command)
     # Escaped, not interpolated raw: a repo path containing & or < would
@@ -80,7 +114,8 @@ def build_task_xml(command, working_dir, start_time=None):
     return _TASK_XML.format(
         start_time=escape(start_time or config.SCHEDULE_TIME),
         command=escape(executable), arguments=escape(arguments),
-        working_dir=escape(working_dir))
+        working_dir=escape(working_dir),
+        user_id=escape(user_id or current_user()))
 
 
 def register(command, working_dir, task_name=None):

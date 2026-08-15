@@ -109,6 +109,39 @@ def test_pdf_bytes_round_trip_unchanged(pg):
     assert filename == "Acme_111.pdf"
 
 
+def test_no_successful_run_today_when_there_are_no_runs(pg):
+    assert db.successful_run_today(pg) is False
+
+
+def test_a_finished_run_counts_as_today_s_run(pg):
+    # Both 'ok' and 'empty' are successful: "nothing matched today" is a real
+    # answer and the digest already went out. Re-running would email it twice.
+    for status in ("ok", "empty"):
+        with pg.cursor() as cur:
+            cur.execute("TRUNCATE matches, seen, runs RESTART IDENTITY CASCADE")
+        run_id = db.start_run("24h", pg)
+        db.finish_run(run_id, fetched=1, skipped_seen=0, examined=0, matched=0,
+                      status=status, conn=pg)
+        assert db.successful_run_today(pg) is True, status
+
+
+def test_a_failed_run_does_not_count(pg):
+    # The whole point of the extra triggers is that a run which died at 09:00
+    # gets another chance when the laptop comes back.
+    run_id = db.start_run("24h", pg)
+    db.fail_run(run_id, "Postgres did not answer", conn=pg)
+    assert db.successful_run_today(pg) is False
+
+
+def test_yesterday_s_run_does_not_count(pg):
+    run_id = db.start_run("24h", pg)
+    db.finish_run(run_id, fetched=1, skipped_seen=0, examined=0, matched=0,
+                  status="ok", conn=pg)
+    with pg.cursor() as cur:
+        cur.execute("UPDATE runs SET started_at = started_at - interval '1 day'")
+    assert db.successful_run_today(pg) is False
+
+
 def test_fetch_pdf_returns_none_for_an_unknown_job(pg):
     assert db.fetch_pdf("does-not-exist", pg) is None
 

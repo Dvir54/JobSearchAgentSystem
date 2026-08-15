@@ -111,6 +111,30 @@ def record_verdict(job_id, run_id, title, company, fit_score, verdict, reason,
         return cur.rowcount == 1
 
 
+def successful_run_today(conn=None):
+    """True when a run has already finished successfully today, locally.
+
+    This is what makes the resume and logon triggers safe: they fire whenever the
+    laptop wakes or the operator logs in, several times a day, and without this
+    each one would mean another search and another digest email.
+
+    'failed' deliberately does not count. A run that died at 09:00 — no network,
+    Docker still starting — must get another chance when the machine comes back.
+
+    Compared in LOCAL_TIMEZONE, not the database's: Postgres runs UTC in a
+    container while the machine is UTC+2/+3, so a plain `started_at::date` would
+    call an 02:00 local run "yesterday".
+    """
+    with _conn(conn).cursor() as cur:
+        cur.execute("""SELECT 1 FROM runs
+                       WHERE status IN ('ok', 'empty')
+                         AND (started_at AT TIME ZONE %s)::date
+                           = (now() AT TIME ZONE %s)::date
+                       LIMIT 1""",
+                    (config.LOCAL_TIMEZONE, config.LOCAL_TIMEZONE))
+        return cur.fetchone() is not None
+
+
 def filter_unseen(job_ids, conn=None):
     """The subset of `job_ids` this agent has never examined.
 
