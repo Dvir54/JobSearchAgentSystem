@@ -224,20 +224,20 @@ def _preflight_failure_run(error):
             "matched_count": 0, "error": error}
 
 
-def command_run():
-    """One day's work. Exit 0 on ok/empty, 1 on failed.
+def command_run(force=False):
+    """One day's work. Exit 0 on ok/empty/already-done, 1 on failed.
 
     Everything it prints is teed to today's log, because the caller that matters
     is Task Scheduler and its console is gone the moment the process ends.
     """
     load_dotenv()
     with tee_stderr_to_log():
-        code = _execute_run()
+        code = _execute_run(force)
         print(f"[run] exit {code}", file=sys.stderr)
         return code
 
 
-def _execute_run():
+def _execute_run(force=False):
     try:
         ensure_database()
     except Exception as exc:                      # noqa: BLE001 - report and stop
@@ -246,6 +246,14 @@ def _execute_run():
         print(f"[run] preflight failed: {exc}", file=sys.stderr)
         _try_notify(_preflight_failure_run(str(exc)), "preflight failure")
         return 1
+
+    # Three triggers fire this command — 09:00, resume, logon — so most
+    # invocations on any given day have nothing to do. Cheaper than a search by
+    # several dollars, and it is what stops one email a day becoming five.
+    if not force and db.successful_run_today():
+        print("[run] today's run has already finished; nothing to do. "
+              "Use `jobs run --force` to run anyway.", file=sys.stderr)
+        return 0
 
     run_id = db.start_run(config.POSTED_LIMIT)
     tooling.set_run_id(run_id)
@@ -397,8 +405,11 @@ def main(argv=None):
         prog="jobs", description="Daily job search, tailoring, and digest.")
     subparsers = parser.add_subparsers(dest="command")
     subparsers.add_parser("setup", help="install: database, schema, 9am task")
-    subparsers.add_parser("run",
-                          help="run one day's search (the 9am task calls this)")
+    run_parser = subparsers.add_parser(
+        "run", help="run one day's search (the scheduled task calls this)")
+    run_parser.add_argument(
+        "--force", action="store_true",
+        help="run even if today's search has already finished")
     pdf_parser = subparsers.add_parser("pdf", help="write a stored CV to a file")
     pdf_parser.add_argument("job_id", help="the id shown in the digest email")
 
@@ -406,7 +417,7 @@ def main(argv=None):
     if args.command == "setup":
         return command_setup()
     if args.command == "run":
-        return command_run()
+        return command_run(force=args.force)
     if args.command == "pdf":
         return command_pdf(args.job_id)
     parser.print_help()

@@ -154,3 +154,9 @@ GMAIL_APP_PASSWORD = os.environ.get("GMAIL_APP_PASSWORD", "")
 # --- Scheduling (Phase R3) ---
 TASK_NAME = "JobSearchAgent"
 SCHEDULE_TIME = "09:00:00"
+
+# "Has today's run already happened?" is asked in THIS timezone, not the
+# database's. Postgres runs in a UTC container while this machine is UTC+2/+3,
+# so `started_at::date` disagrees with the local date for the first hours of
+# every local day — long enough to matter for a 09:00 job.
+LOCAL_TIMEZONE = "Asia/Jerusalem"
