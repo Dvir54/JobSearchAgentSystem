@@ -281,10 +281,22 @@ async def reduce_canva_output(input, tool_use_id, context):
         pages = _forwarded_pages(run)
         print(f"[canva] transaction {transaction_id}: {len(elements)} elements, "
               f"geometry retained in-process", file=sys.stderr)
-        return _slim({"transaction_id": transaction_id,
-                      "page_id": pages[0].get("page_id") if pages else None,
-                      "pages": pages,
-                      "element_count": len(elements)})
+
+        # The map is pinned to element ids in a design the operator can edit at
+        # any time. If one has vanished the template drifted, and writing anyway
+        # puts text in the wrong box on a CV bound for an employer — silently,
+        # because Canva reports success for a replacement that matched nothing.
+        problems = canva.validate_map(elements, config.CANVA_ELEMENT_MAP,
+                                      config.CANVA_VALIDATE_ONLY_IDS)
+        reduced = {"transaction_id": transaction_id,
+                   "page_id": pages[0].get("page_id") if pages else None,
+                   "pages": pages,
+                   "element_count": len(elements)}
+        if problems:
+            for problem in problems:
+                print(f"[canva] TEMPLATE DRIFT: {problem}", file=sys.stderr)
+            reduced["template_problems"] = problems
+        return _slim(reduced)
 
     if name == _CANVA_PERFORM:
         tool_input = input.get("tool_input") or {}

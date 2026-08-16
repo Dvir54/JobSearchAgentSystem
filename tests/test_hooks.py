@@ -9,6 +9,14 @@ from jobsearch.agent.tooling import strip_invented_skills  # noqa: F401  (shared
 
 
 @pytest.fixture(autouse=True)
+def _no_validate_only_ids(monkeypatch):
+    """The Canva payload fixtures carry six elements, not the real template's
+    fourteen. The validate-only list is emptied so unrelated tests are not
+    tripped by layout-drift problems; the drift tests set it explicitly."""
+    monkeypatch.setattr(config, "CANVA_VALIDATE_ONLY_IDS", [])
+
+
+@pytest.fixture(autouse=True)
 def _clear_canva_capacity_state():
     # _CAPACITY_BY_TRANSACTION is module-level state shared across every test that
     # touches reduce_canva_output; without this, a transaction id reused between
@@ -244,6 +252,14 @@ def _start_payload(summary_height=69.33332, skills_height=208.959984,
             _rt_el(f"{PAGE}-header", 229.64, 339.83, 205.81, 26.46, ["Work Experience"]),
             _rt_el(SKILLS_EL, 403.86, 4.65, 178.20, skills_height, ["Java"]),
             _rt_el(f"{PAGE}-vol", 621.98, 42.47, 178.98, 26.46, [" Volunteering"]),
+            # The two bullet blocks the pinned map also names. Present so the
+            # layout-drift check sees a template that matches; parked at left=900
+            # so they overlap nothing horizontally and cannot change any capacity
+            # the overflow tests below assert on.
+            _rt_el(config.CANVA_ELEMENT_MAP["experience.0.bullets"],
+                   500.0, 900.0, 100.0, 26.46, ["bullet one"]),
+            _rt_el(config.CANVA_ELEMENT_MAP["experience.1.bullets"],
+                   550.0, 900.0, 100.0, 26.46, ["bullet two"]),
         ],
         "pages": [{"page_id": PAGE, "page_number": 1, "is_responsive": False,
                    "is_editable": True, "is_empty": False, "thumbnail": {"url": "..."}}],
@@ -267,6 +283,39 @@ def test_start_transaction_is_reduced_to_ids_only():
     assert "richtexts" not in payload
     assert "containerElement" not in text
     assert len(text) < 400
+
+
+def test_a_matching_template_reports_no_problems():
+    out = _reduce("mcp__canva__start-editing-transaction", _start_payload())
+    payload = json.loads(out["hookSpecificOutput"]["updatedToolOutput"][0]["text"])
+    # Silent on the happy path: no extra key, no extra bytes for the model.
+    assert "template_problems" not in payload
+
+
+def test_start_transaction_reports_a_drifted_element_map(capsys):
+    """The pinned map points at element ids in a Canva design nobody controls but
+    Dvir. If he redesigns the template, an id vanishes and the map silently aims
+    at a box that no longer exists — and Canva reports success for a replacement
+    that matched nothing, so the CV would come out wrong with no error anywhere.
+    validate_map existed for exactly this and was never called."""
+    payload = json.loads(_start_payload())
+    payload["richtexts"] = [rt for rt in payload["richtexts"]
+                            if rt["element_id"] != SKILLS_EL]
+
+    out = _reduce("mcp__canva__start-editing-transaction", json.dumps(payload))
+
+    reduced = json.loads(out["hookSpecificOutput"]["updatedToolOutput"][0]["text"])
+    assert any("skills" in problem for problem in reduced["template_problems"])
+    # and loudly, so it reaches the run log rather than only the model
+    assert "template" in capsys.readouterr().err.lower()
+
+
+def test_start_transaction_reports_a_missing_validate_only_id(monkeypatch):
+    # These ids are never written to; they are mapped only so drift is detected.
+    monkeypatch.setattr(config, "CANVA_VALIDATE_ONLY_IDS", [f"{PAGE}-GONE"])
+    out = _reduce("mcp__canva__start-editing-transaction", _start_payload())
+    reduced = json.loads(out["hookSpecificOutput"]["updatedToolOutput"][0]["text"])
+    assert any("GONE" in problem for problem in reduced["template_problems"])
 
 
 def test_start_transaction_forwards_the_pages_array_perform_needs():
