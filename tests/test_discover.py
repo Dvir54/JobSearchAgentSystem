@@ -1,4 +1,6 @@
 """Turning any user's Canva design into something the agent can tailor."""
+import json
+
 from jobsearch.agent import discover
 from jobsearch.resume.base_cv import parse_resume, render_base_cv
 
@@ -136,3 +138,44 @@ def test_bullets_split_on_newlines_within_one_box():
     parsed = discover.build_resume(labels, elements)
     assert parsed.get("Work Experience").entries[0].bullets == [
         "Built REST APIs", "Cut p95 latency by 40%"]
+
+
+def test_the_prompt_lists_every_block_with_its_text_and_position():
+    _, elements = _labelled()
+    prompt = discover.labelling_prompt(elements)
+    assert "Dana Levi" in prompt and "Built REST APIs" in prompt
+    # Position is evidence: a block under a heading is likely part of that section.
+    assert "top" in prompt.lower()
+    for element_id in elements:
+        assert element_id in prompt
+
+
+def test_parse_labelling_reads_a_json_reply():
+    _, elements = _labelled()
+    reply = json.dumps({"sum": "summary", "sk": "skills",
+                        "b0": "experience.0.bullets"})
+    labels = discover.parse_labelling(reply, elements)
+    assert labels["sum"] == "summary"
+    # Anything the reply omits is locked rather than guessed at.
+    assert labels["vol"] == "other"
+
+
+def test_parse_labelling_survives_prose_around_the_json():
+    _, elements = _labelled()
+    reply = 'Here is the mapping:\n```json\n{"sum": "summary"}\n```\nHope that helps.'
+    assert discover.parse_labelling(reply, elements)["sum"] == "summary"
+
+
+def test_parse_labelling_ignores_ids_that_are_not_in_the_design():
+    _, elements = _labelled()
+    reply = json.dumps({"sum": "summary", "ghost": "skills"})
+    assert "ghost" not in discover.parse_labelling(reply, elements)
+
+
+def test_parse_labelling_degrades_to_other_on_unusable_output():
+    """The failure mode of this step has to be "did not tailor", never
+    "tailored the wrong box"."""
+    _, elements = _labelled()
+    for reply in ("", "no json here", "{not valid json}"):
+        labels = discover.parse_labelling(reply, elements)
+        assert set(labels.values()) == {"other"}

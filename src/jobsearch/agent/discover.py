@@ -10,6 +10,7 @@ Only `summary`, `skills` and `experience.N.bullets` are ever rewritten. The othe
 labels exist because base_cv.md needs job titles and dates to be written at all,
 even though nothing ever edits them.
 """
+import json
 import re
 
 from jobsearch.config import EXPERIENCE_SECTION, SKILLS_SECTION, SUMMARY_SECTION
@@ -141,3 +142,82 @@ def build_resume(labels, elements):
         Section(name=SKILLS_SECTION, is_tailored=True, body=first("skills"),
                 entries=[]),
     ])
+
+
+_LABELLING_INSTRUCTIONS = """\
+You are labelling the text boxes of one person's CV, taken from a Canva design.
+
+Return ONLY a JSON object mapping element_id to one of these labels:
+
+  summary                 the personal statement / profile paragraph
+  skills                  the list of skills, as ONE box
+  experience.N.title      job N's title line (N counts from 0, top to bottom)
+  experience.N.dates      job N's date line
+  experience.N.bullets    job N's bullet points
+  name                    the person's name
+  contact                 email, phone, links, location
+  other                   anything else: headings, education, languages,
+                          volunteering, projects, military service
+
+Rules:
+- Number experience entries from 0, in the order they appear down the page.
+- A heading such as "Work Experience" is `other`, not part of an entry.
+- Education, projects and volunteering are `other`, however they are titled.
+- If unsure, answer `other`. A wrong `other` costs nothing; a wrong editable
+  label rewrites the wrong part of someone's CV.
+
+The blocks, in reading order:
+"""
+
+
+def labelling_prompt(elements):
+    """What Claude is asked. Position is included because it is evidence: a block
+    sitting under a "Work Experience" heading is likely part of an entry however
+    it is worded."""
+    lines = [_LABELLING_INSTRUCTIONS]
+    for element_id, element in reading_order(elements):
+        text = _text(element).replace("\n", " / ")
+        if len(text) > 300:
+            text = text[:300] + "..."
+        lines.append(f'- {element_id} (top {element["top"]:.0f}, '
+                     f'left {element["left"]:.0f}): {text!r}')
+    return "\n".join(lines)
+
+
+def parse_labelling(reply, elements):
+    """element_id -> label, defaulting to 'other'.
+
+    Anything the reply omits, invents or garbles becomes 'other', which is
+    locked. The failure mode of this whole step must be "did not tailor" rather
+    than "tailored the wrong box".
+    """
+    labels = {element_id: "other" for element_id in elements}
+    start, end = reply.find("{"), reply.rfind("}")
+    if start == -1 or end == -1 or end < start:
+        return labels
+    try:
+        proposed = json.loads(reply[start:end + 1])
+    except json.JSONDecodeError:
+        return labels
+    if not isinstance(proposed, dict):
+        return labels
+    for element_id, label in proposed.items():
+        if element_id in labels and isinstance(label, str) and _is_label(label):
+            labels[element_id] = label
+    return labels
+
+
+async def label_blocks(elements):
+    """Ask Claude what each block is. One call, once per user — not per run."""
+    from claude_agent_sdk import AssistantMessage, ClaudeAgentOptions, TextBlock, query
+
+    reply = []
+    options = ClaudeAgentOptions(
+        max_turns=1,
+        disallowed_tools=["Bash", "Read", "Write", "WebFetch", "Agent"])
+    async for message in query(prompt=labelling_prompt(elements), options=options):
+        if isinstance(message, AssistantMessage):
+            for block in message.content:
+                if isinstance(block, TextBlock):
+                    reply.append(block.text)
+    return parse_labelling("".join(reply), elements)
