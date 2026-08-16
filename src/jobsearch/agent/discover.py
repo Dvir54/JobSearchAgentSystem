@@ -19,7 +19,7 @@ from jobsearch.resume.base_cv import Entry, ParsedResume, Section
 # The roles the agent may rewrite.
 EDITABLE = ("summary", "skills")
 # Labels that carry no index. Entry labels are matched separately.
-LABELS = ("summary", "skills", "name", "contact", "other")
+LABELS = ("summary", "skills", "name", "contact", "heading", "other")
 _ENTRY_RE = re.compile(r"^experience\.(\d+)\.(title|dates|bullets)$")
 
 
@@ -81,6 +81,24 @@ def structural_problems(labels, elements):
     return found
 
 
+# Two boxes belong to the same column when they overlap horizontally by more than
+# this. The same threshold canva.py uses to decide whether one box sits above
+# another for overflow purposes.
+_MIN_X_OVERLAP = 20.0
+
+
+def _same_column(a, b):
+    """True when two boxes overlap horizontally enough to be read as one column.
+
+    CVs are routinely two-column — a sidebar of skills and languages beside a main
+    column of experience. Vertical position alone interleaves them, so a sidebar
+    heading would otherwise claim the main column's content.
+    """
+    left = max(a["left"], b["left"])
+    right = min(a["left"] + a["width"], b["left"] + b["width"])
+    return (right - left) > _MIN_X_OVERLAP
+
+
 def _text(element):
     """The element's text: regions joined, blank lines dropped."""
     joined = "".join(element.get("regions") or [])
@@ -135,13 +153,55 @@ def build_resume(labels, elements):
     preamble = "\n\n".join(part for part in (f"# {name}" if name else "", contact)
                            if part)
 
-    return ParsedResume(preamble=preamble, sections=[
+    sections = [
         Section(name=SUMMARY_SECTION, is_tailored=True, body=first("summary"),
                 entries=[]),
         Section(name=EXPERIENCE_SECTION, is_tailored=True, body="", entries=entries),
         Section(name=SKILLS_SECTION, is_tailored=True, body=first("skills"),
                 entries=[]),
-    ])
+    ]
+    sections.extend(_extra_sections(labels, elements,
+                                    used={s.name for s in sections}))
+    return ParsedResume(preamble=preamble, sections=sections)
+
+
+def _extra_sections(labels, elements, used):
+    """Sections the agent never edits, kept because it reads this file when it
+    drafts. Dropping a candidate's projects or education would quietly cost them
+    context they actually have.
+
+    A `heading` block opens a section; the `other` blocks beneath it are its
+    body, in reading order. A heading whose children are all editable roles —
+    "Work Experience" — collects nothing and is dropped, which is what keeps the
+    canonical sections from appearing twice.
+    """
+    headings = [(element_id, element)
+                for element_id, element in reading_order(elements)
+                if labels.get(element_id) == "heading"]
+    bodies = {element_id: [] for element_id, _ in headings}
+
+    for element_id, element in reading_order(elements):
+        if labels.get(element_id, "other") != "other":
+            continue
+        owner = None
+        for heading_id, heading in headings:
+            if heading["top"] <= element["top"] and _same_column(heading, element):
+                owner = heading_id          # headings are ordered, so this ends
+        if owner is None:                   # up as the nearest one above
+            continue
+        text = _text(element)
+        if text:
+            bodies[owner].append(text)
+
+    sections = []
+    for heading_id, heading in headings:
+        name = _text(heading)
+        if not name or not bodies[heading_id] or name in used:
+            continue
+        used.add(name)
+        sections.append(Section(name=name, is_tailored=False,
+                                body="\n\n".join(bodies[heading_id]), entries=[]))
+    return sections
 
 
 _LABELLING_INSTRUCTIONS = """\
@@ -156,13 +216,17 @@ Return ONLY a JSON object mapping element_id to one of these labels:
   experience.N.bullets    job N's bullet points
   name                    the person's name
   contact                 email, phone, links, location
-  other                   anything else: headings, education, languages,
-                          volunteering, projects, military service
+  heading                 a section title such as "Projects", "Education",
+                          "Languages" — the label above a group of blocks
+  other                   the content of those sections: project names, degrees,
+                          languages, volunteering, military service
 
 Rules:
 - Number experience entries from 0, in the order they appear down the page.
-- A heading such as "Work Experience" is `other`, not part of an entry.
-- Education, projects and volunteering are `other`, however they are titled.
+- A section title such as "Work Experience" or "Projects" is `heading`, never
+  part of an entry.
+- The content under those titles is `other`: it is kept in the CV for context
+  but never rewritten.
 - If unsure, answer `other`. A wrong `other` costs nothing; a wrong editable
   label rewrites the wrong part of someone's CV.
 

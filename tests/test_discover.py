@@ -179,3 +179,88 @@ def test_parse_labelling_degrades_to_other_on_unusable_output():
     for reply in ("", "no json here", "{not valid json}"):
         labels = discover.parse_labelling(reply, elements)
         assert set(labels.values()) == {"other"}
+
+
+def _labelled_with_extras():
+    labels, elements = _labelled()
+    elements.update({
+        "ph": _el(480.0, 40.0, "Projects"),
+        "p0": _el(500.0, 40.0, "Crypto Advisor"),
+        "p0t": _el(510.0, 40.0, "Python, FastAPI, React"),
+        "eh": _el(600.0, 40.0, "Education"),
+        "e0": _el(620.0, 40.0, "B.Sc. Computer Science, 2023 - 2027"),
+        "wh": _el(190.0, 40.0, "Work Experience"),
+    })
+    labels.update({"ph": "heading", "p0": "other", "p0t": "other",
+                   "eh": "heading", "e0": "other", "wh": "heading"})
+    del labels["vol"]
+    labels["vol"] = "other"
+    return labels, elements
+
+
+def test_heading_is_part_of_the_vocabulary():
+    labels, elements = _labelled_with_extras()
+    assert discover.structural_problems(labels, elements) == []
+
+
+def test_sections_the_agent_never_edits_are_kept():
+    """The generated CV is what the agent reads when drafting, so dropping a
+    candidate's projects would quietly cost them context they actually have."""
+    labels, elements = _labelled_with_extras()
+    parsed = discover.build_resume(labels, elements)
+    names = [s.name for s in parsed.sections]
+    assert "Projects" in names and "Education" in names
+    projects = parsed.get("Projects")
+    assert "Crypto Advisor" in projects.body
+    assert "Python, FastAPI, React" in projects.body
+
+
+def test_the_three_canonical_sections_come_first_and_are_not_duplicated():
+    labels, elements = _labelled_with_extras()
+    names = [s.name for s in discover.build_resume(labels, elements).sections]
+    assert names[:3] == ["About Me", "Work Experience", "Skills"]
+    # "Work Experience" is a heading in the design too; it must not appear twice
+    assert names.count("Work Experience") == 1
+
+
+def test_the_generated_cv_is_stable_once_written():
+    """Not equality with the built object — parse_resume fills in a section body
+    even where entries carry the content, which build_resume leaves empty. What
+    matters is that writing and re-reading the file settles: the guards read this
+    back every run and must see the same CV each time."""
+    labels, elements = _labelled_with_extras()
+    once = parse_resume(render_base_cv(discover.build_resume(labels, elements)))
+    twice = parse_resume(render_base_cv(once))
+    assert once == twice
+    assert "Crypto Advisor" in once.get("Projects").body
+    assert once.get("Work Experience").entries[0].bullets == [
+        "Built REST APIs", "Cut p95 latency by 40%"]
+
+
+def test_a_heading_does_not_claim_blocks_from_another_column():
+    """Two-column CVs are common: a sidebar of Skills and Languages beside a main
+    column of Experience and Projects. Ordering by vertical position alone
+    interleaves them, so a sidebar heading would swallow the main column's
+    content and file a candidate's projects under Volunteering."""
+    def col(top, left, text):
+        return {"top": top, "left": left, "width": 150.0, "height": 20.0,
+                "regions": [text]}
+
+    elements = {
+        "sum": col(100.0, 400.0, "A summary"),
+        "sk": col(150.0, 20.0, "Python"),
+        "b0": col(200.0, 400.0, "Did a thing"),
+        # left column heading, sitting ABOVE a right column block
+        "lh": col(300.0, 20.0, "Languages"),
+        "lang": col(340.0, 20.0, "Hebrew - Native"),
+        # right column heading and its content, lower down the page
+        "ph": col(320.0, 400.0, "Projects"),
+        "proj": col(360.0, 400.0, "Crypto Advisor"),
+    }
+    labels = {"sum": "summary", "sk": "skills", "b0": "experience.0.bullets",
+              "lh": "heading", "lang": "other", "ph": "heading", "proj": "other"}
+
+    parsed = discover.build_resume(labels, elements)
+    assert "Crypto Advisor" in parsed.get("Projects").body
+    assert "Crypto Advisor" not in parsed.get("Languages").body
+    assert parsed.get("Languages").body == "Hebrew - Native"
