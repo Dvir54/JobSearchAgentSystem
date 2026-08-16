@@ -92,38 +92,11 @@ INLINE_RESULT_LIMIT_BYTES = 32768        # the measured CLI ceiling; do not rais
 SAFE_ENVELOPE_BYTES = 24000              # our own budget, well inside it
 MAX_JOB_DESCRIPTION_CHARS = 12000        # so one absurd posting cannot breach it
 
-# --- Canva (Phase R2) ---
-# Copies are made from a pinned TEMPLATE, not the live master résumé, so edits to
-# the master cannot break a run mid-flight. Re-duplicate the master and re-validate
-# the map when the résumé changes; run-start validation surfaces the drift.
-CANVA_TEMPLATE_DESIGN_ID = "DAHQxzJVWM4"
-CANVA_PAGE_ID = "PB5prZGGYdD17M0v"
+# --- Canva ---
+# Which design, and which text box is which, live in the profile — see
+# resume/profile.py. This file describes the agent; the profile describes one
+# person's résumé, which is why nothing here identifies whose CV it is.
 CANVA_FOLDER_PREFIX = "Job CVs"          # folder per run: "Job CVs — 2026-07-29"
-
-
-def _el(suffix):
-    return f"{CANVA_PAGE_ID}-{suffix}"
-
-
-# Slots the pipeline writes, each overwritten wholesale with replace_text.
-CANVA_ELEMENT_MAP = {
-    "summary": _el("LBrJ8LlFHVgPZm7d"),
-    "skills": _el("LBkVtV7y5fKZMm0H"),
-    "experience.0.bullets": _el("LBk2rXZgbWWq75bp"),
-    "experience.1.bullets": _el("LBzpBGcBgpx9yCWC"),
-}
-
-# Never written to. Mapped so the PostToolUse hook on start-editing-transaction
-# can detect layout drift: if any of these ids has vanished from the design, the
-# template was redesigned and the whole pinned map is suspect, even if the four
-# ids we DO write to happen to survive. See hooks.reduce_canva_output.
-CANVA_VALIDATE_ONLY_IDS = [
-    _el("LB6dWjhqhy865bfK"), _el("LBm83fB0jYRwNXp0"),   # experience[0] title, date
-    _el("LBy14hl84Yxspf65"), _el("LBDfDPSFmCscLJyk"),   # experience[1] title, date
-    _el("LBSw3MPln78BRrNQ"), _el("LBBn7RTVpPvK72YS"),   # project[0] title, tech
-    _el("LBQSRXttJ86dgQdP"), _el("LBWRLc5NXj6GqzXz"),   # project[1] title, tech
-    _el("LBCWJ2xXXDKgHbZT"), _el("LBY9Fc1br0rnxvPL"),   # project[2] title, tech
-]
 
 MAX_REDRAFT_ATTEMPTS = 2       # overflow redrafts per job before skipping it
 # Cheap prevention only. The authoritative overflow check is the post-edit height

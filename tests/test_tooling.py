@@ -1,4 +1,5 @@
 from jobsearch import config
+from jobsearch.resume import profile
 from jobsearch.agent.tooling import build_resume_view, clean_jobs, prepare_resume
 
 BASE_MD = """# Cand
@@ -188,13 +189,13 @@ def test_prepare_returns_operations_with_real_element_ids():
     assert out["rejected"] is False
     ops = out["operations"]
     for op in ops:
-        assert op["element_id"] in config.CANVA_ELEMENT_MAP.values()
+        assert op["element_id"] in profile.slots().values()
     by_type = {}
     for op in ops:
         by_type.setdefault(op["type"], []).append(op)
     # summary and skills go wholesale; each bullet gets its own find/replace
     assert {op["element_id"] for op in by_type["replace_text"]} == {
-        config.CANVA_ELEMENT_MAP["summary"], config.CANVA_ELEMENT_MAP["skills"]}
+        profile.slots()["summary"], profile.slots()["skills"]}
     assert len(by_type["find_and_replace_text"]) == 3      # 2 for IBM, 1 for Ness
     for op in by_type["find_and_replace_text"]:
         assert op["find_text"] and op["replace_text"]

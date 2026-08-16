@@ -1,19 +1,26 @@
 import asyncio
 import json
+from pathlib import Path
 
 import pytest
 
-from jobsearch import config
 from jobsearch.agent import hooks
 from jobsearch.agent.tooling import strip_invented_skills  # noqa: F401  (shared guard path)
+from jobsearch.resume import profile
+
+# Read straight from the fixture rather than through profile.slots(): the module
+# level constants below are bound at import, before any fixture has run.
+_SLOTS = json.loads(
+    (Path(__file__).parent / "fixtures" / "profile.json").read_text(
+        encoding="utf-8"))["slots"]
 
 
 @pytest.fixture(autouse=True)
-def _no_validate_only_ids(monkeypatch):
-    """The Canva payload fixtures carry six elements, not the real template's
-    fourteen. The validate-only list is emptied so unrelated tests are not
-    tripped by layout-drift problems; the drift tests set it explicitly."""
-    monkeypatch.setattr(config, "CANVA_VALIDATE_ONLY_IDS", [])
+def _no_locked_ids(monkeypatch):
+    """The Canva payload fixtures carry six elements, not the real design's
+    fourteen. The locked list is emptied so unrelated tests are not tripped by
+    layout-drift problems; the drift tests set it explicitly."""
+    monkeypatch.setattr(profile, "locked", list)
 
 
 @pytest.fixture(autouse=True)
@@ -136,8 +143,8 @@ def _call_guard(operations):
     return asyncio.run(hooks.guard_canva_write(_canva_input(operations), "toolu_test", {}))
 
 
-SKILLS_ID = config.CANVA_ELEMENT_MAP["skills"]
-BULLETS_0_EL = config.CANVA_ELEMENT_MAP["experience.0.bullets"]
+SKILLS_ID = _SLOTS["skills"]
+BULLETS_0_EL = _SLOTS["experience.0.bullets"]
 
 
 def test_guard_allows_skills_present_in_the_base_cv():
@@ -191,8 +198,8 @@ def test_guard_denies_invented_skills_via_find_and_replace_text():
 
 # base_cv.md's Work Experience: entry [0] (IBM Research) has 2 bullets,
 # entry [1] (Ness Technologies) has 1 bullet — these tests depend on that shape.
-EXPERIENCE_0_BULLETS_EL = config.CANVA_ELEMENT_MAP["experience.0.bullets"]
-EXPERIENCE_1_BULLETS_EL = config.CANVA_ELEMENT_MAP["experience.1.bullets"]
+EXPERIENCE_0_BULLETS_EL = _SLOTS["experience.0.bullets"]
+EXPERIENCE_1_BULLETS_EL = _SLOTS["experience.1.bullets"]
 
 
 def test_guard_allows_a_bullet_count_that_matches_base_cv():
@@ -256,9 +263,9 @@ def _start_payload(summary_height=69.33332, skills_height=208.959984,
             # layout-drift check sees a template that matches; parked at left=900
             # so they overlap nothing horizontally and cannot change any capacity
             # the overflow tests below assert on.
-            _rt_el(config.CANVA_ELEMENT_MAP["experience.0.bullets"],
+            _rt_el(EXPERIENCE_0_BULLETS_EL,
                    500.0, 900.0, 100.0, 26.46, ["bullet one"]),
-            _rt_el(config.CANVA_ELEMENT_MAP["experience.1.bullets"],
+            _rt_el(EXPERIENCE_1_BULLETS_EL,
                    550.0, 900.0, 100.0, 26.46, ["bullet two"]),
         ],
         "pages": [{"page_id": PAGE, "page_number": 1, "is_responsive": False,
@@ -312,7 +319,7 @@ def test_start_transaction_reports_a_drifted_element_map(capsys):
 
 def test_start_transaction_reports_a_missing_validate_only_id(monkeypatch):
     # These ids are never written to; they are mapped only so drift is detected.
-    monkeypatch.setattr(config, "CANVA_VALIDATE_ONLY_IDS", [f"{PAGE}-GONE"])
+    monkeypatch.setattr(profile, "locked", lambda: [f"{PAGE}-GONE"])
     out = _reduce("mcp__canva__start-editing-transaction", _start_payload())
     reduced = json.loads(out["hookSpecificOutput"]["updatedToolOutput"][0]["text"])
     assert any("GONE" in problem for problem in reduced["template_problems"])

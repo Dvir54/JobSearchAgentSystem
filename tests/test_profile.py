@@ -65,6 +65,14 @@ def test_accessors_read_the_file():
     assert profile.locked() == ["PAGE-d"]
 
 
+def test_config_carries_no_canva_identity():
+    """Whose CV this is belongs in the profile, not the source. Also why the
+    published repository contains no personal design ids."""
+    for gone in ("CANVA_ELEMENT_MAP", "CANVA_VALIDATE_ONLY_IDS",
+                 "CANVA_TEMPLATE_DESIGN_ID", "CANVA_PAGE_ID"):
+        assert not hasattr(config, gone), f"{gone} should have moved to the profile"
+
+
 def test_the_file_is_cached_but_reset_is_honoured():
     profile.save(_good())
     assert profile.design_id() == "DAG1"

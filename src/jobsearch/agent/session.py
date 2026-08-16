@@ -21,6 +21,7 @@ from jobsearch import config
 from jobsearch.agent import hooks
 from jobsearch.agent import tooling
 from jobsearch.agent.tools import resume_tools
+from jobsearch.resume import profile
 
 # Loaded at import time (not just inside main()) so that MONID_API_KEY is already
 # in os.environ by the time build_options() runs — including when build_options()
@@ -221,7 +222,7 @@ Follow this workflow exactly:
         a missing key, a wrong type) is a fixable drafting error, not a verdict on
         the job. Fix exactly what the message names and call `prepare_resume` again.
         Try at most twice more, then skip the job and record why.
-   d. Call `copy-design` with design_id {config.CANVA_TEMPLATE_DESIGN_ID!r}. Keep the
+   d. Call `copy-design` with design_id '{{DESIGN_ID}}'. Keep the
       new design's id and its edit URL.
    e. Call `start-editing-transaction` on that new design. Keep the transaction id
       AND the `pages` array it returns.
@@ -348,8 +349,12 @@ def build_options() -> "ClaudeAgentOptions":
       schemas behind its own `ToolSearch`, burning extra turns before real tool calls even
       start, and this session judges/tailors many jobs in a loop.
     """
+    # The design id is substituted at call time, not baked into the prompt at
+    # import: there may be no profile yet when this module is first imported,
+    # and `jobs init` has to be able to run in order to create one.
+    workflow = INSTRUCTIONS.replace("{DESIGN_ID}", profile.design_id())
     return ClaudeAgentOptions(
-        system_prompt=INSTRUCTIONS,
+        system_prompt=workflow,
         mcp_servers={
             "monid": {
                 "type": "http",
