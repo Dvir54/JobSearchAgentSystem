@@ -1,104 +1,97 @@
-# `delivery` — getting results to the operator
+# `delivery` — running the agent, and telling you what happened
 
 | File | Responsibility |
 |---|---|
-| `cli.py` | The `jobs` command: setup, run, pdf. Preflight, run shape, logging. |
+| `cli.py` | The `jobs` command: `setup`, `run`, `pdf`. The shape of a run. |
 | `mailer.py` | Renders and sends the daily digest. |
-| `scheduling.py` | Task Scheduler XML and registration. |
+| `scheduling.py` | Registers the scheduled task. |
 
-`cli.py` is orchestration only — every decision of substance lives in `db.py`, the agent's
-tooling, or the agent's own judgement. Its job is the run's *shape*: preflight, open the run
-row, drive the session, close the row, report by email.
+`cli.py` orchestrates and decides nothing of substance. Its job is the run's *shape*: get the
+database up, check whether today is already done, open the run row, drive the session, close
+the row, report by email.
 
-## The invariant: exactly one email every morning
+---
 
-Three flavours — the matches, "nothing today", or the failure. Always one.
+## The contract: one email every morning
 
-**That is what makes silence meaningful.** If no email arrives, the scheduler never fired or
-the network was down: the one class of failure nothing inside the program can report, because
-reporting it needs the very thing that broke. Any *other* failure emails you.
+Three flavours — the matches, "nothing today", or the failure. Always exactly one.
 
-The digest carries **no attachments** by design, which makes `jobs pdf <id>` load-bearing —
-it is the only route from the database back to a file you can attach. Exports land in
-`output/<run date>/`, dated by when the CV was made rather than when you exported it, so
+That consistency is what makes **silence meaningful**. If no email arrives, either the
+scheduler never fired or the network was down — the one class of failure that can't report
+itself, because reporting needs the very thing that broke. Every other failure emails you.
+
+The digest carries **no attachments**. It lists each match with its score, reasoning and a
+link, and `jobs pdf <id>` fetches the CV itself when you want it. Exports are filed under
+`output/<run date>/`, dated by when the CV was made rather than when you asked for it, so
 running the command twice never scatters one job across two folders.
 
-## `jobs run` starts its own dependencies
+---
 
-It does not merely wait for Docker — it starts it. `ensure_database()` launches Docker
-Desktop if the daemon is silent, polls up to 120s for it (a cold start takes 30–90s, and
-`docker compose up` against a half-booted daemon just fails), brings up the container, then
-waits for Postgres.
+## Running every day on a laptop
 
-This exists because of a real morning. On 2026-08-14 the 09:00 task fired correctly seven
-minutes after a reboot, found Docker Desktop not running, waited two minutes for a container
-nobody was going to start, and died before writing a `runs` row.
+A laptop is not a server. It sleeps, it hibernates, it gets closed mid-morning and opened at
+lunchtime. A single alarm at 09:00 misses all of that.
 
-The recovery is deliberately **best-effort**: if Docker cannot be started, that is reported
-and `wait_for_database()` still decides whether the run proceeds. "Could not start Docker" is
-a symptom; "Postgres never answered on 5433" is the fact worth emailing.
-
-## Every run leaves a log
-
-`logs/run-YYYY-MM-DD.log`, one file per day, stderr teed and flushed on every write. A
-scheduled task's console closes with the process, and a preflight failure dies *before* the
-`runs` row exists — so without this, an unattended failure leaves nothing behind anywhere.
-The 2026-08-14 diagnosis had to be reconstructed from a Windows exit code and an absent
-database row.
-
-**If a morning's log file does not exist at all, the task never ran.**
-
-## Three triggers, because one moment a day is not enough
+So the task has **three triggers**, and whichever fires first does the day's work:
 
 | Trigger | When | Delay |
 |---|---|---|
 | Daily | 09:00 | — |
-| Resume | Power-Troubleshooter event 1 — any wake from sleep or hibernation | 1 min |
-| Logon | This user signs in | 2 min |
+| Resume | The machine wakes from sleep or hibernation | 1 min |
+| Logon | You sign in | 2 min |
 
-Whichever fires first does the day's work; the rest cost one database query. The delays let
-Wi-Fi and the Docker daemon come up first.
+The short delays give Wi-Fi and the Docker daemon a moment to come up first.
 
-**Why the resume trigger exists.** On 2026-08-15 the machine hibernated at 06:12 — it has no
-S3 sleep, only Modern Standby, and on battery Windows hibernates once the standby budget is
-spent (at 92% charge; this is about elapsed standby time, not charge level). A hibernating
-machine is electrically off, so `WakeToRun` could not reach it and 09:00 was missed. And
-`StartWhenAvailable` did not rescue it: **it re-checks missed runs after a boot, and a resume
-from hibernation is not a boot.** Six hours after the machine came back,
-`NumberOfMissedRuns` was still 1 and nothing had run.
+**Extra triggers are only safe because of the guard.** Before doing anything, `jobs run` asks
+the database whether today already has a finished run, and exits in one query if so — no
+search, no email, no cost. Without it, every lid-open would mean another search and another
+message in your inbox. A *failed* run doesn't count as done, so a morning that broke gets
+another attempt the next time the machine comes back.
 
-**The guard is not optional.** These triggers fire several times a day. `jobs run` calls
-`db.successful_run_today()` before doing anything and exits immediately if today is already
-done — otherwise every lid-open would mean another search and another email. `jobs run
---force` overrides it. A *failed* run deliberately does not count as done, so a run that died
-at 09:00 gets another chance when the machine wakes.
+`jobs run --force` overrides the guard when you want to re-run a finished day deliberately.
 
-**A `LogonTrigger` must name a `UserId`.** Without one it means *any* user logs on, which
-Windows treats as privileged: `schtasks` rejects the whole task with `ERROR: Access is
-denied`. Naming the account keeps registration possible without elevation.
+**The run starts its own dependencies.** If the Docker daemon isn't answering it launches
+Docker Desktop, waits for it, brings up the database container, and only then connects. It
+doesn't assume the machine was left in a working state, because after a reboot it usually
+wasn't. If that recovery fails it still tries to connect, so the error you're sent is
+"Postgres never answered" — the fact you need — rather than a symptom further up the chain.
 
-The task XML is generated rather than built with `schtasks /SC DAILY`, because neither these
-triggers nor `WakeToRun` and `StartWhenAvailable` can be expressed on that command line. It
-runs with `InteractiveToken`, so no password is stored.
+### Power settings that matter
+
+Waking a sleeping machine needs wake timers enabled **on battery as well as mains**. Disabled
+on battery is the Windows default, and it quietly turns the 09:00 alarm into nothing the
+moment you unplug.
 
 ```powershell
-Get-ScheduledTaskInfo JobSearchAgent                 # LastRunTime, LastResult
-powercfg /query SCHEME_CURRENT SUB_SLEEP RTCWAKE     # BOTH indexes must be 0x1
+powercfg /query SCHEME_CURRENT SUB_SLEEP RTCWAKE   # both indexes should read 0x1
 ```
 
-**Wake timers must be enabled on battery as well as AC.** Disabled-on-battery is the Windows
-default and it turns `WakeToRun` into dead weight the moment you unplug — the task then waits
-for your next login instead of waking the machine. That is exactly why 2026-08-13 never ran.
+There's a limit worth knowing: on a laptop with modern standby, Windows hibernates the
+machine once it has spent its overnight power budget — typically after a few hours on
+battery, regardless of how much charge is left. A hibernating machine is electrically off and
+no timer can reach it. That's what the resume trigger is for: the run happens when you open
+the lid instead.
 
-Waking covers sleep and hibernation. A machine fully shut down cannot be woken by anything,
-and falls back to `StartWhenAvailable` at next login.
+---
 
-The task invokes `jobs.exe` by **absolute path**, because a non-interactive session does not
-inherit the interactive PATH. Consequence: changing the package layout or the entry point
-requires `pip install -e .` — a stale entry point fails silently until 09:00.
+## When something goes wrong
 
-## Gmail
+Every run writes `logs/run-YYYY-MM-DD.log`, one file per day, flushed as it goes. A scheduled
+task's console closes with the process, so without this an unattended failure would leave
+nothing behind at all — and a failure during startup happens before there's a run row to
+record it in.
 
-SMTP over implicit TLS on port 465. Google displays app passwords in four groups of four, and
-pasting it as shown is the obvious thing to do — but SMTP rejects the spaced form, so
-`app_password()` strips spaces. Failure messages never include the password.
+**If a morning's log file doesn't exist, the task never ran.** That single check separates
+"the agent broke" from "the agent never started", which are very different problems.
+
+```powershell
+Get-ScheduledTaskInfo JobSearchAgent     # last run, last result, missed runs
+```
+
+---
+
+## Email
+
+Gmail over SMTP with an app password, on implicit TLS. Google displays app passwords in four
+groups of four; the spaces are for readability and SMTP rejects them, so they're stripped
+before use. Failure messages never quote the password back.

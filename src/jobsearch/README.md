@@ -1,66 +1,79 @@
-# `jobsearch` — settings and the system of record
+# `jobsearch` — the package
 
-Two modules live at the package root because everything else depends on them.
+Two modules sit at the root because everything else depends on them.
 
 | File | Responsibility |
 |---|---|
-| `config.py` | Every tunable setting, path, and measured limit. No logic. |
-| `db.py` | Every SQL statement in the system. No SQL lives anywhere else. |
+| `config.py` | Every tunable setting, path and measured limit. No logic. |
+| `db.py` | Every SQL statement in the system. |
 
-Then three subpackages: [`agent/`](agent/README.md) runs the autonomous session,
-[`resume/`](resume/README.md) owns the CV domain, [`delivery/`](delivery/README.md) gets
-results to the operator.
+Then three packages, each with its own README:
 
-## The invariant: Postgres is the system of record
+- **[`agent/`](agent/README.md)** — the autonomous session: what Claude sees, what it may do,
+  and the hooks that hold the line
+- **[`resume/`](resume/README.md)** — the CV domain: parsing, truthfulness, page geometry
+- **[`delivery/`](delivery/README.md)** — the CLI, the daily email, the scheduled task
 
-Not files. Not a JSON state file. Every job ever examined and every tailored PDF lives in the
-database, and **no SQL exists outside `db.py`** — so there is exactly one place to look when
-you want to know what the system remembers.
+They layer one way: `delivery` and `agent` build on `resume`, and `resume` depends on nothing
+but `config`.
 
-A local `postgres:16` container bound to `127.0.0.1:5433`, data in the `jobsearch-pgdata`
-Docker volume. Port **5433**, not the default: this machine already runs a native
-PostgreSQL 18 service that owns 5432, and taking it would mean stopping an install this
-project knows nothing about.
+---
+
+## The database is the system of record
+
+Not files, not a JSON state file. Every job the agent has ever examined and every CV it has
+ever written lives in Postgres — a local container bound to `127.0.0.1`, reachable from
+nowhere else.
+
+**All SQL lives in `db.py`.** There is exactly one file to read to know everything the system
+remembers.
 
 | Table | What it holds |
 |---|---|
-| `runs` | One row per invocation: counts, window, status, error. |
-| `seen` | Every job ever examined, with score, verdict and a one-line reason. |
-| `matches` | The full record for jobs that passed, including the PDF bytes in `bytea`. |
+| `runs` | One row per run: window, counts, status, error. |
+| `seen` | Every job ever examined, with its score, verdict and one-line reason. |
+| `matches` | The full record for jobs that passed, including the PDF itself. |
 
-Two details in that schema are load-bearing:
+Three details in that schema carry real weight:
 
-**`seen.job_id` is the primary key, and that *is* the dedup mechanism.** Not a check in
-application code that someone could forget to call — an insert that cannot succeed twice.
-`record_verdict` uses `ON CONFLICT DO NOTHING`, so re-judging a job the agent has already
-seen can neither overwrite the verdict a CV was written from nor raise.
+**`seen.job_id` is the primary key, and that *is* the deduplication.** Not a check somewhere
+in the code that a future change might skip — an insert that cannot succeed twice. Re-judging
+a job the agent has already seen can neither overwrite the original verdict nor raise an
+error. Being unable to forget is a property of the storage, not a promise made by the caller.
 
-**Score and reason live only in `seen`.** `matches` joins to them rather than duplicating
-them, so the digest email can never report a different score than the one the CV was gated
-on. The two cannot drift because there is only one copy.
+**Score and reasoning live only in `seen`.** `matches` joins to them rather than keeping its
+own copy, so the score in your inbox is necessarily the score the CV was gated on. There is
+one number, so there is nothing to drift.
 
-Connections are autocommit. Each write is independently meaningful: a verdict recorded for
-job 7 must survive a crash while judging job 8, so there is no run-spanning transaction.
+**PDFs are stored as bytes, in the row.** A CV and the reasoning that produced it can't become
+separated, and there's no directory of orphaned files to tidy up. `jobs pdf <id>` writes one
+back out when you want it.
 
-## No backups, by explicit choice
+Writes commit individually. A verdict recorded for one job survives a crash while judging the
+next, so an interrupted run keeps everything it had already established.
 
-`docker compose down -v`, `docker volume rm`, or a Docker Desktop factory reset destroys the
-history permanently. Nothing else does — the volume survives container stop and reboot.
+---
 
-The consequence is mild and was accepted deliberately: losing the database means the agent
-forgets which jobs it has judged and re-examines them once, at the cost of one day's tokens.
-It does not lose the ability to work.
+## No backups, by choice
 
-## `config.py` loads `.env` at import
+`docker compose down -v`, removing the volume, or resetting Docker will destroy the history
+permanently. Nothing else will — the data survives container restarts and reboots.
 
-The module calls `load_dotenv()` at import time, before it reads `os.environ`. This looks
-redundant and is not. It previously ran later, inside a CLI command, by which point config
-had already snapshotted empty strings — so `GMAIL_ADDRESS` and `GMAIL_APP_PASSWORD` were
-always blank no matter what `.env` held. `jobs setup` reported credentials missing that were
-sitting in the file, and the same ordering would have silently killed the digest every
-morning while every test passed.
+The consequence is deliberately mild. Losing the database means the agent forgets which jobs
+it has judged and re-examines them once, costing a single day's tokens. It doesn't lose the
+ability to work, and none of it is data you couldn't regenerate by running again tomorrow.
 
-`PROJECT_ROOT` is computed by walking three levels up from this directory. Everything read
-from disk hangs off it, and a wrong value still produces valid `Path` objects — so nothing
-would crash, the agent would simply read a CV that isn't there.
-`tests/test_config_paths.py` exists to make that fail loudly.
+---
+
+## Configuration
+
+`config.py` is the one place to change behaviour: the role queries, the fit score a job needs
+to earn a CV, the search window, the experience levels, the location filter, and the time the
+scheduled run fires.
+
+It loads `.env` when it is imported, before reading any environment variable, so every setting
+is populated no matter which command runs first.
+
+`PROJECT_ROOT` anchors everything read from disk — your CV, the schema, the logs, the exports.
+It is derived from this file's own location rather than the working directory, so the agent
+finds the same files whether it is started by you or by the scheduler.

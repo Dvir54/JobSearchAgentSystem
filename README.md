@@ -20,11 +20,77 @@ flowchart LR
   DB --> M["one digest email"]
 ```
 
-The interesting step is the second one. Deduping, the Israel filter and *"have I already
-judged this?"* all happen in-process, **before the model sees anything** — so a job you were
-shown yesterday costs nothing today, not even tokens. One live run examined 17 jobs for
-$3.31; the next run that morning found 15 of its 80 postings already judged, examined zero,
-and cost $0.48.
+The interesting step is the third one. Deduplication, the location filter and *"have I
+already judged this?"* all happen in this process, **before the model sees anything** — so a
+job you were shown yesterday costs nothing today, not even the tokens to look at it. A
+morning with genuinely new postings costs a couple of dollars; a second run the same day
+costs a few cents, because there is nothing left to think about.
+
+---
+
+## One cycle, step by step
+
+**1 · Trigger.** Windows starts `jobs run` at 09:00, or ~1 minute after the machine wakes,
+or ~2 minutes after you log in — whichever comes first. One moment a day isn't enough on a
+laptop: left on battery it hibernates in the early hours, and a hibernating machine is
+electrically off, so no timer can reach it.
+
+**2 · Preflight.** Starts Docker Desktop if its daemon is silent, brings up the Postgres
+container, waits for it to answer. It *starts* its dependencies rather than assuming them —
+nothing else on the machine will.
+*On failure:* no run row exists yet, so it emails you the error and exits 1.
+
+**3 · The once-per-day guard.** One query: has a run already finished successfully today? If
+so it exits immediately — no search, no email, no cost. This is what makes three triggers
+safe instead of three emails. A *failed* earlier run doesn't count, so a morning that broke
+gets another attempt when the laptop wakes.
+
+**4 · Open the run row.** From here everything is recorded in Postgres, including a crash.
+
+**5 · Search.** Five role queries — software, backend, fullstack, AI engineer, QA automation
+— filtered to Israel, entry level, posted in the last 24 hours, via Monid → Apify's
+LinkedIn scraper. A typical morning returns 70–110 postings.
+
+**6 · Reduce, before the model sees anything.** A hook intercepts the raw scrape in-process:
+dedupe by id, drop anything not actually in Israel, and drop every posting already judged on
+an earlier day. What reaches Claude is a manifest of about 97 bytes per job; the full
+descriptions stay in this process and are served one at a time on request. Roughly 1 MB of
+JSON becomes ~1 KB of context.
+
+**7 · Judge.** Claude reads each remaining posting and scores it 0–100 against your CV, with
+a one-line reason, judging from the stated requirements rather than the job title. **A
+verdict is recorded for every posting, kept or rejected** — that row is what makes tomorrow
+skip it for free.
+
+**8 · Tailor** — only for jobs scoring ≥ 70. Claude drafts new wording; code decides whether
+that draft is allowed (see the table below). Then the agent copies your pinned Canva design,
+applies the approved edits, and two checks run: the element map is verified against the live
+design in case you redesigned the template, and the result is measured to confirm nothing
+overflowed the page.
+*On failure:* the transaction is cancelled and the job skipped — never committed half-edited.
+An overflowing draft is redrafted up to twice before giving up.
+
+**9 · Export and store.** The design is exported as a PDF and written into Postgres with its
+score, reasoning, apply URL and Canva link. `jobs pdf <id>` writes it back out later.
+
+**10 · Close the run and email.** The run row is finished as `ok`, `empty` or `failed`, and
+exactly one digest goes out. Everything printed along the way is in
+`logs/run-YYYY-MM-DD.log`.
+
+### What decides what
+
+The split is the design of this project: Claude does judgement and prose, and nothing else.
+
+| Decided by Claude | Decided by code |
+|---|---|
+| Is this job a fit, and why | The fit threshold that earns a CV |
+| How to reword a bullet for this role | Whether that wording is truthful — invented skills stripped, bullets reworded one-to-one, length budgets enforced |
+| Which jobs to skip and why | Which postings are even shown to it (dedupe, location, already-seen) |
+| The summary paragraph | Whether the result fits on the page, measured from real geometry |
+| — | What gets stored, and what you're emailed |
+
+The agent has no `Bash`, `Read`, `Write`, `WebFetch` or `Agent` tools. A failure can't degrade
+into hand-parsing files.
 
 ---
 
@@ -62,8 +128,9 @@ jobs setup
 ```
 
 Starts Postgres, creates the schema, checks every key, logs into Gmail to prove the app
-password works, registers the 09:00 task, and reports whether your power plan will let it
-wake the machine. Safe to re-run.
+password actually works, registers the scheduled task, and tells you whether your power plan
+will let it wake the machine. Safe to re-run — it repairs a partial install rather than
+complaining about one.
 
 ## The three commands
 
@@ -78,12 +145,8 @@ database. The id is in the email.
 
 ## The daily contract
 
-The run starts at **09:00, or when the laptop wakes, or at logon — whichever happens first**,
-and a guard makes sure it does the work only once per day. One moment a day was not enough:
-a laptop left on battery hibernates in the early hours, and a hibernating machine is
-electrically off, so nothing can wake it for a 09:00 timer.
-
 You get **exactly one email every morning** — the matches, "nothing today", or the failure.
+Whichever trigger fires first does the work; the rest cost a single database query.
 
 **So silence is the alarm.** No email means the scheduler never fired or the network was
 down: the one class of failure nothing inside the program can report. Check
