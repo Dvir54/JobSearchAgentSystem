@@ -2,7 +2,6 @@
 this stays unit-testable without the SDK or any agent run.
 """
 import json
-import re
 import sys
 from dataclasses import dataclass
 
@@ -17,6 +16,7 @@ from jobsearch.config import (
 )
 from jobsearch.agent.jobs import normalize_posting
 from jobsearch.resume.base_cv import parse_resume
+from jobsearch.resume.render import pdf_filename
 from jobsearch.resume.tailoring import (
     TailoredCV,
     TailoredEntry,
@@ -160,26 +160,6 @@ class _Score:
     fit_score: int
     reason: str
     match_kind: str
-
-
-def _sanitise_path_component(value):
-    """Strip characters that make a value unsafe as a path component. Used on
-    company, title, and job_id alike — all three come from a scraper."""
-    return re.sub(r'[<>:"/\\|?*]', "", value).strip().replace(" ", "_")
-
-
-def safe_filename(company, title, job_id=None):
-    """Company/title/job_id come from a scraper — never trust them as path
-    components. Two distinct postings can share company+title (e.g. two roles
-    both titled "Software Engineer" at the same employer), so job_id — when
-    present — disambiguates the filename; without it, two such postings would
-    silently overwrite each other."""
-    c = _sanitise_path_component(company)
-    t = _sanitise_path_component(title)
-    if job_id:
-        j = _sanitise_path_component(str(job_id))
-        return f"{c}_{t}_{j}.md"
-    return f"{c}_{t}.md"
 
 
 def _budget_exceeded(new_text, original_text):
@@ -520,7 +500,6 @@ def save_pdf(export_url, job_id, canva_design_id, canva_url):
     Returns rather than raises: one job's failed download must not end the run.
     """
     global _MATCHED
-    from jobsearch.resume.render import pdf_filename
     job = _JOBS_BY_ID.get(str(job_id))
     if job is None:
         message = (f"no job with id {job_id!r} in this run; cannot store a CV "

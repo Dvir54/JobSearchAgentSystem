@@ -108,7 +108,10 @@ CANVA_ELEMENT_MAP = {
     "experience.1.bullets": _el("LBzpBGcBgpx9yCWC"),
 }
 
-# Never written — mapped only so run-start validation detects layout drift.
+# Never written to. Mapped so the PostToolUse hook on start-editing-transaction
+# can detect layout drift: if any of these ids has vanished from the design, the
+# template was redesigned and the whole pinned map is suspect, even if the four
+# ids we DO write to happen to survive. See hooks.reduce_canva_output.
 CANVA_VALIDATE_ONLY_IDS = [
     _el("LB6dWjhqhy865bfK"), _el("LBm83fB0jYRwNXp0"),   # experience[0] title, date
     _el("LBy14hl84Yxspf65"), _el("LBDfDPSFmCscLJyk"),   # experience[1] title, date

@@ -225,6 +225,13 @@ Follow this workflow exactly:
       new design's id and its edit URL.
    e. Call `start-editing-transaction` on that new design. Keep the transaction id
       AND the `pages` array it returns.
+      If the response carries `template_problems`, the résumé template has been
+      redesigned and the pinned element ids no longer match it. Do NOT edit: the
+      text would land in the wrong boxes, and a replacement that matches nothing
+      still reports success, so nothing downstream would catch it. Call
+      `cancel-editing-transaction`, record the job as skipped quoting the first
+      problem, and move on. Every job this run will hit the same fault — say so
+      in your final summary so the template can be re-pinned.
    f. Call `perform-editing-operations` passing the `operations` array `prepare_resume`
       returned VERBATIM — together with the transaction id, `page_index: 1`, and the
       `pages` array from step (e) exactly as it came back. Do NOT construct, reorder,

@@ -96,6 +96,15 @@ def test_agent_still_denies_the_builtin_tools(monkeypatch):
         assert denied in opts.disallowed_tools
 
 
+def test_the_workflow_tells_the_agent_what_to_do_about_template_drift():
+    """The hook can only report drift; aborting is the agent's move, and it will
+    not know to make it unless the prompt says so."""
+    from jobsearch.agent import session
+    assert "template_problems" in session.WORKFLOW
+    drift = session.WORKFLOW[session.WORKFLOW.index("template_problems"):]
+    assert "cancel" in drift[:600].lower()
+
+
 def test_the_cli_stderr_is_captured_into_our_log(monkeypatch, capsys):
     """2026-08-15: the first task-launched run ever to reach the agent failed
     with a bare "Control request timeout: initialize" and nothing else. The CLI

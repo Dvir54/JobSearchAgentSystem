@@ -1,57 +1,104 @@
 # `agent` — the autonomous session
 
-One Claude Agent SDK session does the whole day's work. Claude judges fit and drafts the
-tailored wording. **Nothing else is delegated to it.**
+One Claude session does a whole day's work: read the postings, decide which ones fit, and
+write the tailored wording for the ones that do.
+
+Claude is trusted with **judgement and prose**. Everything else — what it's allowed to see,
+what it's allowed to write, and what actually gets saved — is decided by the code in this
+package.
 
 | File | Responsibility |
 |---|---|
-| `session.py` | The workflow prompt, SDK options, and hook registration. One session per run. |
-| `tools.py` | The in-process MCP tools the agent may call. Definitions only. |
-| `tooling.py` | What those tools actually do, plus the payload reducer. |
-| `hooks.py` | Payload reduction and the Canva write guard. |
-| `jobs.py` | Normalises raw scraper JSON into a posting. |
+| `session.py` | The workflow prompt and the session's configuration. One session per run. |
+| `tools.py` | The tools the agent may call, as an in-process MCP server. |
+| `tooling.py` | What those tools actually do, and the payload reducer. |
+| `hooks.py` | Intercepts tool traffic: reduces what comes back, guards what goes out. |
+| `jobs.py` | Turns raw scraper JSON into a clean posting. |
 
-## The invariant: the hooks are the enforcement boundary, not the prompt
+---
 
-The agent makes the Canva MCP calls itself. So a guard that runs *before* it calls — like
-`prepare_resume` returning an approved operation list — is advice, not enforcement: nothing
-stops the model sending different operations. A **PreToolUse hook inspecting what is
-genuinely about to be written** is the only real boundary, because it sits between the
-model's decision and the API.
+## How one session runs
 
-Two SDK facts make this concrete, and both cost a live run to learn:
+The agent is given a workflow and a set of tools, then left to work through the day's jobs on
+its own. A single run looks like this from the inside:
 
-**`allowed_tools` only pre-approves — it does not restrict.** With it alone the agent kept
-`Bash`, `Grep` and `Agent`, and when payload reduction failed it routed around the failure
-by hand-parsing a 787KB file in 256 tool calls, for $7.19 in one run. `disallowed_tools` is
-what actually denies `Bash`, `Read`, `Write`, `WebFetch` and `Agent`. A failure cannot
-degrade into hand-parsing.
+1. **Search.** It calls the job source with a pinned recipe — five role titles, Israel,
+   entry level, the last 24 hours. The recipe lives in `session.py`, not in the model's
+   judgement, so what gets searched is stable and reviewable.
 
-**The CLI truncates oversized MCP results *before* PostToolUse hooks run.** An oversized
-result becomes a "saved to file" stub, so the reduction hook silently never fires. Raising
-`MAX_MCP_OUTPUT_TOKENS` via `env` is what lets the hook see real JSON.
+2. **Receive a manifest, not a scrape.** The raw result never reaches it. See below.
 
-## Reduction happens before the model sees anything
+3. **Read one posting at a time.** The manifest carries only ids, titles and companies. When
+   the agent wants to judge a job it asks for that job's description specifically.
 
-A raw 24h scrape measured 774,006 characters — roughly 193K tokens. The PostToolUse hook on
-`monid_get_run` reduces it in-process: dedupe by id, keep only Israel-located postings, drop
-every job already in `seen`, and project to a manifest of about 97 bytes per job. Full
-descriptions stay in process and `get_job` serves them one at a time.
+4. **Score it, and record the verdict.** Every posting gets a score, a one-line reason, and a
+   row in the database — including the ones it rejects. That row is what stops tomorrow's run
+   paying to think about the same job twice.
 
-**Cross-run dedup lives here, in the hook** — not in the prompt, not in a tool the model
-chooses to call. That placement is why a job you were shown yesterday costs nothing today.
+5. **Tailor the ones that qualify.** For anything scoring at or above the threshold, it
+   drafts new wording and hands it to `prepare_resume`, which either returns an approved set
+   of edits or refuses with a reason specific enough to fix.
 
-There is a **second, separate 32KB ceiling** on what a PostToolUse hook hands *back*, with no
-environment variable to raise it. `MAX_MCP_OUTPUT_TOKENS` governs the earlier guard and does
-nothing here. A reduced envelope of 55,198 bytes was silently truncated to a 2,000-byte
-preview and the agent could see 1 job of 22. Serving descriptions one at a time is the fix;
-`INLINE_RESULT_LIMIT_BYTES` and `SAFE_ENVELOPE_BYTES` in `config.py` are belt and braces that
-make a pathological run fail loudly instead.
+6. **Report.** At the end it summarises what it examined, matched and skipped.
 
-## The search recipe is pinned
+---
 
-The endpoint takes its fields inside a `body` envelope: `input: {"body": {...}}`. The prompt
-once sent them flat, so `monid_run` rejected the first call of **every** run and the agent
-improvised the wrapper each time. `tooling._window()` had always read `input["body"]` — two
-ends of our own code disagreeing, invisible to any test of either side alone. The regression
-test asserts what we send round-trips through what the reducer reads.
+## The payload reducer
+
+A morning's scrape is around a megabyte of JSON — roughly 190,000 tokens of job descriptions,
+duplicate listings and postings that aren't really in Israel. Sending that to a model is slow,
+expensive, and mostly waste.
+
+So it never arrives. A hook intercepts the search result in this process and rewrites it
+before the agent sees anything:
+
+- **deduplicate** by job id
+- **drop** anything whose location isn't actually in Israel — the source's own location filter
+  is leaky and returns remote roles from across the region
+- **drop** every posting already judged on a previous day
+- **project** what's left down to a manifest of roughly 97 bytes per job
+
+A megabyte becomes about a kilobyte. The full descriptions stay here in memory and are handed
+over one at a time when the agent asks for a specific job.
+
+**Cross-run deduplication lives in this hook — in code, before the model is involved.** Not in
+the prompt, and not in a tool the agent has to remember to call. That placement is why a job
+you were shown yesterday costs nothing at all today, not even the tokens to look at it.
+
+---
+
+## Hooks are the boundary, not the prompt
+
+The agent makes its own calls to Canva. So a check that runs *before* it calls — one that
+hands it an approved list of operations and trusts it to send them — is advice, not
+enforcement.
+
+The real boundary is a hook sitting between the model's decision and the API, inspecting what
+is genuinely about to be written. Two of them run on every edit:
+
+- **Before a write**, the operations are checked against the CV's actual content: no invented
+  skills, no changed bullet counts, nothing outside the slots the design defines.
+- **After a write**, the resulting page is measured to confirm the text landed and nothing
+  overflowed. Canva reports success for a replacement that matched nothing, so a reported
+  success is never taken at face value.
+
+The same principle shapes the session's tool list. The agent has **no** `Bash`, `Read`,
+`Write`, `WebFetch` or `Agent` tools — they are explicitly denied, not merely left
+unmentioned. Without that, a failure in the reduction step degrades into the model reading
+the raw scrape off disk by hand, one grep at a time, at many times the cost.
+
+---
+
+## Size limits worth knowing
+
+Two separate ceilings apply to tool traffic, and they are not the same one:
+
+- What a tool returns is capped before hooks run. It's raised via the session's environment so
+  the reducer sees real data rather than a truncated stub.
+- What a **hook** hands back is capped again, at 32 KB, and nothing raises it. This is why
+  descriptions are served one job at a time instead of being packed into the manifest — a
+  reduced payload that breaches the ceiling is silently replaced by a short preview, and the
+  agent would see one job out of twenty.
+
+The budgets in `config.py` sit inside both limits, so an unusual run fails loudly instead of
+quietly losing most of its work.

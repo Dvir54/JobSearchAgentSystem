@@ -1,46 +1,60 @@
 # Tests
 
 ```bash
-.venv/Scripts/python.exe -m pytest        # all of them
-.venv/Scripts/python.exe -m pytest -k pdf # one slice
+.venv/Scripts/python.exe -m pytest          # everything, about five seconds
+.venv/Scripts/python.exe -m pytest -k pdf   # one slice
 ```
 
-243 tests, about four seconds. Flat layout: one `test_*.py` per module, not mirrored onto the
-package tree — at this size the mirror costs churn and buys no navigation.
+266 tests, one file per module. Flat rather than mirroring the package tree — at this size a
+mirror costs navigation without adding any.
 
-## They use a real Postgres, not a mock
+---
 
-Database tests run against a throwaway `jobs_test` database in the same container, truncated
-between tests. Deliberately not a fake: the design's whole dedup guarantee is *"the primary
-key makes a duplicate insert impossible"*, and a mock would only prove the mock does what the
-mock was told. `conftest.py` skips these with a clear message when the container is down, so
-a developer without Docker gets a skip rather than a wall of errors.
+## What they cover
 
-`_offline_dedup` is autouse and makes cross-run dedup default to "every job is new" for unit
-tests, so reducer tests do not depend on whatever the real `seen` table happens to hold today.
-Tests that actually exercise dedup override it.
+| Area | What's pinned |
+|---|---|
+| `test_reduce`, `test_payload_ceiling` | The scrape is deduplicated, filtered to Israel, stripped of already-seen jobs, and kept inside the size limits |
+| `test_tailoring`, `test_guards` | Invented skills are removed, bullet counts are preserved, length budgets are enforced |
+| `test_canva` | Capacity and overflow are computed from real geometry |
+| `test_hooks` | The write guard rejects what it should, and template drift is caught |
+| `test_db` | Deduplication, verdict recording, and PDF round-trips against real Postgres |
+| `test_cli` | Run shape: preflight, the once-per-day guard, exit codes, digest on every path |
+| `test_scheduling` | The task carries all three triggers and the settings that let it wake a laptop |
+| `test_mailer` | All three digest flavours, with every field escaped |
 
-## The invariant: a green suite is necessary but not sufficient
+---
 
-**Every serious defect in this project's history was found by running the thing, never by the
-test suite — and the suite was fully green each time.**
+## The database tests use a real Postgres
 
-- R1: payload reduction silently never fired. One $7.19 run.
-- R2: three Canva behaviours no fixture predicted.
-- R3: `config.py` snapshotted `os.environ` before `load_dotenv()` ran, which would have
-  silenced the digest every morning forever.
-- R4 (pre-work): two failed mornings, both machine environment, neither visible to any test.
+Not a mock. They run against a throwaway `jobs_test` database in the same container, cleared
+between tests.
 
-The reason is structural, not carelessness. These bugs live in the **seams** between our code
-and something external — the CLI's own guards, Canva's API, Windows' console encoding, an
-endpoint's schema. Tests mock those seams, so both halves of a mismatch stay internally
-consistent and agree with each other.
+That's deliberate. The central guarantee of the design is *"a duplicate insert is impossible
+because the primary key says so"* — and a mock asked to prove that would only demonstrate
+that the mock does what it was told. The claim is about Postgres, so Postgres has to answer
+it.
 
-The clearest case: `session.py` sent a flat `input` while `tooling._window()` read
-`input["body"]`. Two parts of *our own* code disagreeing, each tested against its own
-assumption, both passing.
+If the container isn't running these tests skip with a clear message rather than failing, so
+the rest of the suite still runs.
 
-**So:** budget one live run per phase before calling it done. When a live run exposes
-something, write the regression test *and* record the measured number in a code comment —
-that is why `config.py`, `mailer.py` and `hooks.py` carry comments naming past failures.
-Prefer probes that pin both ends together over a test of either side alone.
+---
+
+## What a green suite does and doesn't tell you
+
+It tells you the logic is right: the guards reject what they should, the reducer keeps what it
+should, the run reports what it did.
+
+It cannot tell you the system works, because the interesting failures in a project like this
+one don't live inside the code. They live in the seams between it and something external — an
+API that reports success for an edit that changed nothing, a scheduler that treats waking a
+laptop differently from starting it, a console that can't print the character you're about to
+write to it.
+
+Tests mock those seams, and a mock is built from the same assumption as the code it's testing.
+When the assumption is wrong, both halves agree with each other and pass.
+
+So the suite is necessary and not sufficient. The other half of the practice is running the
+real thing before calling a change done, and writing down what it measured — which is why
+several modules carry comments naming exact byte counts, timings and API quirks. Those numbers
+came from runs, not from reasoning, and they're the part worth keeping.
