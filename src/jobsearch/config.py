@@ -49,6 +49,11 @@ LOG_DIR = PROJECT_ROOT / "logs"
 # email. Deleting the whole directory loses nothing.
 OUTPUT_DIR = PROJECT_ROOT / "output"
 
+# Which Canva design belongs to this user, and which text box in it is which.
+# Written by `jobs init`, git-ignored: it describes one person's résumé, and it is
+# the reason the rest of this file carries no Canva identity at all.
+PROFILE_PATH = PROJECT_ROOT / "profile.json"
+
 # --- Monid job source ---
 MONID_MCP_URL = "https://mcp.monid.ai/v1"
 MONID_PROVIDER = "apify"

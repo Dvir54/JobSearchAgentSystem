@@ -5,6 +5,9 @@
 base_cv.txt
 base_cv.md
 
+# Per-user Canva profile, written by `jobs init` — names one person's design
+profile.json
+
 # Python
 __pycache__/
 *.py[cod]
