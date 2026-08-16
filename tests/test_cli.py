@@ -654,3 +654,35 @@ def test_main_dispatches_init(monkeypatch):
                             design=design, force=force) or 0)
     assert cli.main(["init", "DAG1", "--force"]) == 0
     assert seen == {"design": "DAG1", "force": True}
+
+
+def test_run_refuses_without_a_profile(wired, monkeypatch, tmp_path, capsys):
+    monkeypatch.setattr(config, "PROFILE_PATH", tmp_path / "nope.json")
+    profile.reset_cache()
+    ran = []
+    monkeypatch.setattr(cli, "_drive_session", lambda: ran.append(1))
+    assert cli.command_run() == 1
+    assert ran == []
+    assert "jobs init" in capsys.readouterr().err
+
+
+def test_run_refuses_an_incomplete_profile(wired, monkeypatch, tmp_path, capsys):
+    # A half-filled profile would tailor into boxes nobody confirmed.
+    path = tmp_path / "profile.json"
+    path.write_text(json.dumps({"design_id": "D", "page_id": "P",
+                                "slots": {"summary": "a"}, "locked": []}),
+                    encoding="utf-8")
+    monkeypatch.setattr(config, "PROFILE_PATH", path)
+    profile.reset_cache()
+    ran = []
+    monkeypatch.setattr(cli, "_drive_session", lambda: ran.append(1))
+    assert cli.command_run() == 1
+    assert ran == []
+    assert "skills" in capsys.readouterr().err
+
+
+def test_setup_refuses_without_a_profile(pg, monkeypatch, tmp_path, capsys):
+    monkeypatch.setattr(config, "PROFILE_PATH", tmp_path / "nope.json")
+    profile.reset_cache()
+    assert cli.command_setup() == 1
+    assert "jobs init" in capsys.readouterr().out

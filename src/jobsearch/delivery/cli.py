@@ -237,7 +237,28 @@ def command_run(force=False):
         return code
 
 
+def _profile_problems():
+    """Readable reasons this machine cannot run yet, or an empty list."""
+    from jobsearch.resume import profile
+
+    try:
+        data = profile.load()
+    except FileNotFoundError as exc:
+        return [str(exc)]
+    return profile.problems(data)
+
+
 def _execute_run(force=False):
+    # Before anything expensive: a missing or half-filled profile means the agent
+    # would tailor into boxes nobody confirmed.
+    problems = _profile_problems()
+    if problems:
+        for problem in problems:
+            print(f"[run] {problem}", file=sys.stderr)
+        print("[run] run `jobs init` to point the agent at your Canva CV.",
+              file=sys.stderr)
+        return 1
+
     try:
         ensure_database()
     except Exception as exc:                      # noqa: BLE001 - report and stop
@@ -325,6 +346,14 @@ def scheduled_command():
 def command_setup():
     """Install everything, once. Idempotent: re-running repairs a partial install."""
     load_dotenv()
+
+    problems = _profile_problems()
+    if problems:
+        print("Not ready to install yet:")
+        for problem in problems:
+            print(f"  {problem}")
+        print("Run `jobs init` to point the agent at your Canva CV.")
+        return 1
 
     print("Starting Postgres...")
     try:
