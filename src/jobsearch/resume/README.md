@@ -55,10 +55,13 @@ master cannot break a run mid-flight. When your real CV changes, update both `ba
 (the facts) and the Canva template (the design). If they drift apart, drafts start getting
 rejected because the guards insist on content the design no longer has.
 
-## A known wart
+## This package depends on nothing else
 
-`render.py` imports `safe_filename` from `agent/tooling.py`, and `agent/tooling.py` imports
-`pdf_filename` back from `render.py` inside a function. That cycle is benign only because the
-second import is lazy. It predates the R4 restructure, which was a pure move; untangling it
-means relocating `safe_filename`, which is a behavioural change and was deliberately left
-out of scope.
+`resume` imports only `config`. `agent` imports `resume`, never the reverse — you can load
+and test the CV domain without pulling in the session, the hooks or the payload reducer.
+
+That was not true until R6. `render.py` imported `safe_filename` from `agent/tooling.py`
+while `agent/tooling.py` imported `pdf_filename` back from `render.py`, and the pair only
+avoided an import error because the second import hid inside a function body. Moving that
+function here — to its only caller — made the dependency one-directional, and the deferred
+import could go back to the top of the file where it belongs.

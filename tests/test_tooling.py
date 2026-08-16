@@ -1,5 +1,5 @@
 from jobsearch import config
-from jobsearch.agent.tooling import build_resume_view, clean_jobs, prepare_resume, safe_filename
+from jobsearch.agent.tooling import build_resume_view, clean_jobs, prepare_resume
 
 BASE_MD = """# Cand
 
@@ -68,24 +68,6 @@ def _job(job_id="j-1"):
 def _score(fit=82, junior=True):
     return {"is_junior_friendly": junior, "fit_score": fit,
             "reason": "Strong match.", "match_kind": "direct"}
-
-
-def test_safe_filename_includes_job_id():
-    assert safe_filename("Acme", "Backend Developer", "abc123") == "Acme_Backend_Developer_abc123.md"
-
-
-def test_safe_filename_falls_back_without_job_id():
-    assert safe_filename("Acme", "Backend Developer") == "Acme_Backend_Developer.md"
-    assert safe_filename("Acme", "Backend Developer", None) == "Acme_Backend_Developer.md"
-    assert safe_filename("Acme", "Backend Developer", "") == "Acme_Backend_Developer.md"
-
-
-def test_safe_filename_sanitises_job_id_like_company_and_title():
-    # Same character-stripping as company/title: path separators are removed,
-    # so the sanitised id cannot escape out_dir when joined onto it.
-    name = safe_filename("Acme", "Backend Developer", "../../evil")
-    assert "/" not in name and "\\" not in name
-    assert name == "Acme_Backend_Developer_....evil.md"
 
 
 def _tailored_ok():
