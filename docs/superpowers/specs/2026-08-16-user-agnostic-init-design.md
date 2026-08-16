@@ -152,7 +152,11 @@ gap by hand. `jobs run` refuses to start on an incomplete profile.
 - **`cli.py`** gains `command_init()`. `jobs setup` refuses to proceed without a profile and
   points at `jobs init`. `jobs run` does the same.
 - **README and directory READMEs** gain the setup flow, the Canva scopes a user is granting,
-  and the structural requirements.
+  and the structural requirements — including a ten-second self-check a user can run before
+  installing anything: *open the CV in Canva and click a bullet. If it selects the whole job
+  block, or all the bullets, you are fine. If it selects only that one line, each bullet is
+  its own box and the agent will refuse.* Same test on a skill: the whole list should
+  highlight, not one word.
 - **`.gitignore`** gains `profile.json`.
 
 ## Testing
