@@ -12,6 +12,9 @@ even though nothing ever edits them.
 """
 import re
 
+from jobsearch.config import EXPERIENCE_SECTION, SKILLS_SECTION, SUMMARY_SECTION
+from jobsearch.resume.base_cv import Entry, ParsedResume, Section
+
 # The roles the agent may rewrite.
 EDITABLE = ("summary", "skills")
 # Labels that carry no index. Entry labels are matched separately.
@@ -75,3 +78,66 @@ def structural_problems(labels, elements):
                 f"each bullet in experience entry {int(index) + 1} is a separate "
                 f"text box; the agent needs a job's bullets in one box")
     return found
+
+
+def _text(element):
+    """The element's text: regions joined, blank lines dropped."""
+    joined = "".join(element.get("regions") or [])
+    return "\n".join(line.strip() for line in joined.splitlines() if line.strip())
+
+
+def build_profile(labels, elements, design_id, page_id, design_title):
+    """The profile `jobs init` writes: editable slots, everything else locked."""
+    slots, locked = {}, []
+    for element_id, _element in reading_order(elements):
+        label = labels.get(element_id, "other")
+        match = _ENTRY_RE.match(label or "")
+        editable = label in EDITABLE or (match and match.group(2) == "bullets")
+        if editable:
+            slots[label] = element_id
+        else:
+            locked.append(element_id)
+    return {"design_id": design_id, "page_id": page_id,
+            "design_title": design_title, "slots": slots, "locked": locked}
+
+
+def build_resume(labels, elements):
+    """A ParsedResume assembled from labelled blocks, ready for render_base_cv.
+
+    Canonical section names regardless of what the design calls them: the parser
+    and the guards keep one contract, and only this function has to know that a
+    user's "Profile" heading means About Me.
+    """
+    by_label = {}
+    for element_id, element in reading_order(elements):
+        by_label.setdefault(labels.get(element_id, "other"), []).append(element)
+
+    def first(label):
+        found = by_label.get(label)
+        return _text(found[0]) if found else ""
+
+    entries = []
+    indexes = sorted({int(_ENTRY_RE.match(label).group(1))
+                      for label in by_label if _ENTRY_RE.match(label or "")})
+    for index in indexes:
+        title = first(f"experience.{index}.title")
+        dates = first(f"experience.{index}.dates")
+        anchor = f"### {title}" if title else f"### Role {index + 1}"
+        if dates:
+            anchor += f"\n*{dates}*"
+        bullets = [line for line in first(f"experience.{index}.bullets").splitlines()
+                   if line]
+        entries.append(Entry(anchor=anchor, bullets=bullets))
+
+    name = first("name")
+    contact = first("contact")
+    preamble = "\n\n".join(part for part in (f"# {name}" if name else "", contact)
+                           if part)
+
+    return ParsedResume(preamble=preamble, sections=[
+        Section(name=SUMMARY_SECTION, is_tailored=True, body=first("summary"),
+                entries=[]),
+        Section(name=EXPERIENCE_SECTION, is_tailored=True, body="", entries=entries),
+        Section(name=SKILLS_SECTION, is_tailored=True, body=first("skills"),
+                entries=[]),
+    ])
