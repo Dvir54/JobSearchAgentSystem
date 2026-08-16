@@ -1,3 +1,4 @@
+import json
 from datetime import datetime
 
 import pytest
@@ -6,6 +7,7 @@ from jobsearch.delivery import cli
 from jobsearch import config
 from jobsearch import db
 from jobsearch.agent import tooling
+from jobsearch.resume import profile
 
 
 def _boom(message):
@@ -559,3 +561,96 @@ def test_a_log_that_cannot_be_opened_does_not_break_the_run(wired, monkeypatch,
                         lambda: {"summary": "", "cost": 0.0, "is_error": False})
     _stats(monkeypatch, fetched=0, dropped_seen=0, examined=0, matched=0)
     assert cli.command_run() == 0
+
+
+# --- jobs init: point the agent at this user's Canva CV ---
+
+def _rt(element_id, top, text):
+    return {"element_id": element_id, "regions": [{"text": text}],
+            "containerElement": {"type": "TEXT",
+                                 "position": {"top": top, "left": 40.0},
+                                 "dimension": {"width": 300.0, "height": 40.0}}}
+
+
+def _design_payload():
+    """A one-page design as start-editing-transaction returns it."""
+    return {"transaction": {"transaction_id": "TX1"},
+            "richtexts": [_rt("sum", 120.0, "Final-year CS student"),
+                          _rt("b0", 240.0, "Built REST APIs"),
+                          _rt("sk", 400.0, "Python, SQL")],
+            "pages": [{"page_id": "PAGE"}]}
+
+
+@pytest.fixture
+def init_wired(monkeypatch, tmp_path):
+    monkeypatch.setattr(config, "PROFILE_PATH", tmp_path / "profile.json")
+    monkeypatch.setattr(config, "BASE_CV_PATH", tmp_path / "base_cv.md")
+    monkeypatch.setattr(cli, "_read_design",
+                        lambda design: ("DAG1", "My CV", _design_payload()))
+    monkeypatch.setattr(cli, "_label",
+                        lambda elements: {"sum": "summary", "sk": "skills",
+                                          "b0": "experience.0.bullets"})
+    profile.reset_cache()
+    return tmp_path
+
+
+def test_init_writes_a_profile_and_a_cv(init_wired, capsys):
+    assert cli.command_init("DAG1") == 0
+    saved = json.loads((init_wired / "profile.json").read_text(encoding="utf-8"))
+    assert saved["slots"]["summary"] == "sum"
+    assert saved["design_id"] == "DAG1"
+    written = (init_wired / "base_cv.md").read_text(encoding="utf-8")
+    assert "## About Me" in written and "Python, SQL" in written
+    assert "base_cv.md" in capsys.readouterr().out
+
+
+def test_init_refuses_a_multi_page_design(init_wired, monkeypatch, capsys):
+    payload = _design_payload()
+    payload["pages"] = [{"page_id": "P1"}, {"page_id": "P2"}]
+    monkeypatch.setattr(cli, "_read_design", lambda design: ("DAG1", "My CV", payload))
+    assert cli.command_init("DAG1") == 1
+    assert "2 pages" in capsys.readouterr().out
+    # nothing written: a design we cannot tailor leaves no half-profile behind
+    assert not (init_wired / "profile.json").exists()
+
+
+def test_init_reports_a_structure_it_cannot_handle(init_wired, monkeypatch, capsys):
+    payload = _design_payload()
+    payload["richtexts"].append(_rt("extra", 260.0, "Cut latency"))
+    monkeypatch.setattr(cli, "_read_design", lambda design: ("DAG1", "My CV", payload))
+    monkeypatch.setattr(cli, "_label",
+                        lambda elements: {"sum": "summary", "sk": "skills",
+                                          "b0": "experience.0.bullets",
+                                          "extra": "experience.0.bullets"})
+    assert cli.command_init("DAG1") == 1
+    assert "separate text box" in capsys.readouterr().out
+    # written anyway, so the gap can be filled by hand
+    assert (init_wired / "profile.json").exists()
+
+
+def test_init_does_not_overwrite_an_existing_cv(init_wired, capsys):
+    (init_wired / "base_cv.md").write_text("# Mine\n", encoding="utf-8")
+    assert cli.command_init("DAG1") == 0
+    assert (init_wired / "base_cv.md").read_text(encoding="utf-8") == "# Mine\n"
+    assert "not overwritten" in capsys.readouterr().out
+
+
+def test_force_regenerates_the_cv(init_wired):
+    (init_wired / "base_cv.md").write_text("# Mine\n", encoding="utf-8")
+    assert cli.command_init("DAG1", force=True) == 0
+    assert "## About Me" in (init_wired / "base_cv.md").read_text(encoding="utf-8")
+
+
+def test_init_reports_a_canva_that_cannot_be_reached(init_wired, monkeypatch, capsys):
+    monkeypatch.setattr(cli, "_read_design", _boom("unauthorized"))
+    assert cli.command_init("DAG1") == 1
+    assert "authoris" in capsys.readouterr().out.lower()
+
+
+def test_main_dispatches_init(monkeypatch):
+    seen = {}
+    monkeypatch.setattr(cli, "command_init",
+                        lambda design=None, force=False: seen.update(
+                            design=design, force=force) or 0)
+    assert cli.main(["init", "DAG1", "--force"]) == 0
+    assert seen == {"design": "DAG1", "force": True}
