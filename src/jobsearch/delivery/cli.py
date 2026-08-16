@@ -477,6 +477,17 @@ def command_init(design=None, force=False):
         config.BASE_CV_PATH.write_text(text, encoding="utf-8")
         print(f"  Wrote {config.BASE_CV_PATH.name}   ({len(text):,} bytes)")
 
+        # The lossless contract, checked rather than assumed: a block that never
+        # reached the file would be invisible, and nobody can review text that
+        # is not there.
+        gaps = discover.coverage_gaps(elements, text)
+        if gaps:
+            print(f"  ! {len(gaps)} of {len(elements)} blocks did not make it into "
+                  f"the file: {', '.join(gaps[:6])}"
+                  f"{' ...' if len(gaps) > 6 else ''}")
+        else:
+            print(f"  All {len(elements)} blocks captured")
+
     print("\nNEXT: open base_cv.md and check it.\n"
           "  It is the source of truth for every honesty check the agent makes -\n"
           "  which skills it may claim, and how many bullets each job has.\n"

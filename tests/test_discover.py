@@ -264,3 +264,76 @@ def test_a_heading_does_not_claim_blocks_from_another_column():
     assert "Crypto Advisor" in parsed.get("Projects").body
     assert "Crypto Advisor" not in parsed.get("Languages").body
     assert parsed.get("Languages").body == "Hebrew - Native"
+
+
+def _messy_design():
+    """A CV with the awkward shapes real designs have: several contact blocks, a
+    two-column split, a section title the labeller did not recognise, and a stray
+    block sitting below the headings with nothing above it in its column."""
+    def box(top, left, text, width=150.0):
+        return {"top": top, "left": left, "width": width, "height": 20.0,
+                "regions": [text]}
+
+    elements = {
+        "name":   box(40.0, 20.0, "Dana Levi"),
+        "title":  box(60.0, 20.0, "Computer Science Student"),
+        "phone":  box(75.0, 20.0, "+972-50-0000000"),
+        "mail":   box(90.0, 20.0, "dana@example.com"),
+        "link":   box(105.0, 20.0, "github.com/danalevi"),
+        "sum":    box(150.0, 400.0, "A summary paragraph."),
+        "wh":     box(200.0, 400.0, "Work Experience"),
+        "t0":     box(220.0, 400.0, "Backend Developer | Acme"),
+        "d0":     box(240.0, 400.0, "2024 - now"),
+        "b0":     box(260.0, 400.0, "Built REST APIs"),
+        "skh":    box(300.0, 20.0, "Skills"),
+        "sk":     box(320.0, 20.0, "Python, SQL"),
+        "pubh":   box(400.0, 400.0, "Publications"),
+        "pub":    box(420.0, 400.0, "A paper about things, 2025"),
+        # nothing above it in its own column, and below the first heading
+        "stray":  box(500.0, 700.0, "Available on request", width=120.0),
+    }
+    labels = {"name": "name", "title": "other", "phone": "contact",
+              "mail": "contact", "link": "contact",
+              "sum": "summary", "wh": "heading",
+              "t0": "experience.0.title", "d0": "experience.0.dates",
+              "b0": "experience.0.bullets",
+              "skh": "heading", "sk": "skills",
+              "pubh": "heading", "pub": "other", "stray": "other"}
+    return labels, elements
+
+
+def test_nothing_in_the_design_is_dropped():
+    """The contract: base_cv.md holds everything the Canva CV holds, however it
+    is laid out. Losing a block is invisible -- you cannot review text that is
+    not there -- so this is asserted rather than hoped for."""
+    labels, elements = _messy_design()
+    rendered = render_base_cv(discover.build_resume(labels, elements))
+    assert discover.coverage_gaps(elements, rendered) == []
+
+
+def test_every_contact_block_survives_not_just_the_first():
+    labels, elements = _messy_design()
+    rendered = render_base_cv(discover.build_resume(labels, elements))
+    for expected in ("+972-50-0000000", "dana@example.com", "github.com/danalevi",
+                     "Computer Science Student"):
+        assert expected in rendered
+
+
+def test_an_unrecognised_section_keeps_its_own_name():
+    labels, elements = _messy_design()
+    parsed = discover.build_resume(labels, elements)
+    assert "A paper about things, 2025" in parsed.get("Publications").body
+
+
+def test_a_block_with_no_owning_heading_is_kept_not_binned():
+    labels, elements = _messy_design()
+    parsed = discover.build_resume(labels, elements)
+    names = [s.name for s in parsed.sections]
+    assert "Additional" in names
+    assert "Available on request" in parsed.get("Additional").body
+
+
+def test_coverage_gaps_names_a_block_that_went_missing():
+    # The assertion must be able to fail, or it proves nothing.
+    _labels, elements = _messy_design()
+    assert "mail" in discover.coverage_gaps(elements, "nothing here")

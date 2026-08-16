@@ -686,3 +686,8 @@ def test_setup_refuses_without_a_profile(pg, monkeypatch, tmp_path, capsys):
     profile.reset_cache()
     assert cli.command_setup() == 1
     assert "jobs init" in capsys.readouterr().out
+
+
+def test_init_reports_that_every_block_was_captured(init_wired, capsys):
+    assert cli.command_init("DAG1") == 0
+    assert "All 3 blocks captured" in capsys.readouterr().out

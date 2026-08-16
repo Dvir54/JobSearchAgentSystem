@@ -120,24 +120,50 @@ def build_profile(labels, elements, design_id, page_id, design_title):
             "design_title": design_title, "slots": slots, "locked": locked}
 
 
+
+
+def _owning_heading(element, headings):
+    """The nearest heading above this block IN ITS OWN COLUMN, or None."""
+    owner = None
+    for heading_id, heading in headings:            # already in reading order
+        if heading["top"] <= element["top"] and _same_column(heading, element):
+            owner = heading_id
+    return owner
+
+
 def build_resume(labels, elements):
     """A ParsedResume assembled from labelled blocks, ready for render_base_cv.
 
-    Canonical section names regardless of what the design calls them: the parser
-    and the guards keep one contract, and only this function has to know that a
-    user's "Profile" heading means About Me.
+    LOSSLESS BY CONTRACT: every text block in the design ends up somewhere in the
+    result. Labelling decides *where* a block goes and whether it is editable —
+    never whether it survives.
+
+    That inversion matters on a CV nobody has seen before. An extractor that keeps
+    only what it recognises deletes the rest silently, and a user cannot review
+    text that is not there. Here a misjudged block lands in the wrong section
+    instead: visible in the file, and fixable by editing markdown.
+
+    Section names are canonical for the three the agent edits, so the parser and
+    the guards keep one contract however the design words its headings. Every
+    other heading keeps its own name.
     """
-    by_label = {}
-    for element_id, element in reading_order(elements):
-        by_label.setdefault(labels.get(element_id, "other"), []).append(element)
+    ordered = reading_order(elements)
+    headings = [(element_id, element) for element_id, element in ordered
+                if labels.get(element_id) == "heading"]
+    first_heading_top = headings[0][1]["top"] if headings else None
+
+    def texts(label):
+        return [_text(element) for element_id, element in ordered
+                if labels.get(element_id) == label and _text(element)]
 
     def first(label):
-        found = by_label.get(label)
-        return _text(found[0]) if found else ""
+        found = texts(label)
+        return found[0] if found else ""
 
+    # --- the three roles the agent edits, plus the entry parts that describe them
     entries = []
     indexes = sorted({int(_ENTRY_RE.match(label).group(1))
-                      for label in by_label if _ENTRY_RE.match(label or "")})
+                      for label in labels.values() if _ENTRY_RE.match(label or "")})
     for index in indexes:
         title = first(f"experience.{index}.title")
         dates = first(f"experience.{index}.dates")
@@ -148,10 +174,30 @@ def build_resume(labels, elements):
                    if line]
         entries.append(Entry(anchor=anchor, bullets=bullets))
 
+    spoken_for = {element_id for element_id, _ in ordered
+                  if labels.get(element_id) in ("summary", "skills", "heading")
+                  or _ENTRY_RE.match(labels.get(element_id) or "")}
+
+    # --- everything else is placed, never dropped
+    preamble_parts, orphans = [], []
+    bodies = {heading_id: [] for heading_id, _ in headings}
     name = first("name")
-    contact = first("contact")
-    preamble = "\n\n".join(part for part in (f"# {name}" if name else "", contact)
-                           if part)
+    if name:
+        preamble_parts.append(f"# {name}")
+
+    for element_id, element in ordered:
+        if element_id in spoken_for or labels.get(element_id) == "name":
+            continue
+        text = _text(element)
+        if not text:
+            continue
+        owner = _owning_heading(element, headings)
+        if owner is not None:
+            bodies[owner].append(text)
+        elif first_heading_top is None or element["top"] < first_heading_top:
+            preamble_parts.append(text)     # the header block: name, contact, title
+        else:
+            orphans.append(text)
 
     sections = [
         Section(name=SUMMARY_SECTION, is_tailored=True, body=first("summary"),
@@ -160,50 +206,39 @@ def build_resume(labels, elements):
         Section(name=SKILLS_SECTION, is_tailored=True, body=first("skills"),
                 entries=[]),
     ]
-    sections.extend(_extra_sections(labels, elements,
-                                    used={s.name for s in sections}))
-    return ParsedResume(preamble=preamble, sections=sections)
-
-
-def _extra_sections(labels, elements, used):
-    """Sections the agent never edits, kept because it reads this file when it
-    drafts. Dropping a candidate's projects or education would quietly cost them
-    context they actually have.
-
-    A `heading` block opens a section; the `other` blocks beneath it are its
-    body, in reading order. A heading whose children are all editable roles —
-    "Work Experience" — collects nothing and is dropped, which is what keeps the
-    canonical sections from appearing twice.
-    """
-    headings = [(element_id, element)
-                for element_id, element in reading_order(elements)
-                if labels.get(element_id) == "heading"]
-    bodies = {element_id: [] for element_id, _ in headings}
-
-    for element_id, element in reading_order(elements):
-        if labels.get(element_id, "other") != "other":
-            continue
-        owner = None
-        for heading_id, heading in headings:
-            if heading["top"] <= element["top"] and _same_column(heading, element):
-                owner = heading_id          # headings are ordered, so this ends
-        if owner is None:                   # up as the nearest one above
-            continue
-        text = _text(element)
-        if text:
-            bodies[owner].append(text)
-
-    sections = []
+    used = {section.name for section in sections}
     for heading_id, heading in headings:
-        name = _text(heading)
-        if not name or not bodies[heading_id] or name in used:
+        heading_name = _text(heading)
+        if not heading_name or not bodies[heading_id] or heading_name in used:
+            # A heading whose children are all editable roles — "Work Experience" —
+            # collects nothing, which is what stops the canonical sections
+            # appearing twice.
+            orphans.extend(bodies[heading_id] if heading_name in used else [])
             continue
-        used.add(name)
-        sections.append(Section(name=name, is_tailored=False,
+        used.add(heading_name)
+        sections.append(Section(name=heading_name, is_tailored=False,
                                 body="\n\n".join(bodies[heading_id]), entries=[]))
-    return sections
+
+    if orphans:
+        sections.append(Section(name="Additional", is_tailored=False,
+                                body="\n\n".join(orphans), entries=[]))
+    return ParsedResume(preamble="\n\n".join(preamble_parts), sections=sections)
 
 
+def coverage_gaps(elements, rendered):
+    """Element ids whose text does not appear in the rendered CV.
+
+    The assertion behind the lossless contract. It has to be able to fail, or it
+    proves nothing — see the test that feeds it an empty document.
+    """
+    missing = []
+    for element_id, element in reading_order(elements):
+        text = _text(element)
+        if not text:
+            continue
+        if not all(line in rendered for line in text.splitlines()):
+            missing.append(element_id)
+    return missing
 _LABELLING_INSTRUCTIONS = """\
 You are labelling the text boxes of one person's CV, taken from a Canva design.
 
@@ -285,3 +320,4 @@ async def label_blocks(elements):
                 if isinstance(block, TextBlock):
                     reply.append(block.text)
     return parse_labelling("".join(reply), elements)
+
