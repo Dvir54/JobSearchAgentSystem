@@ -237,7 +237,28 @@ def command_run(force=False):
         return code
 
 
+def _profile_problems():
+    """Readable reasons this machine cannot run yet, or an empty list."""
+    from jobsearch.resume import profile
+
+    try:
+        data = profile.load()
+    except FileNotFoundError as exc:
+        return [str(exc)]
+    return profile.problems(data)
+
+
 def _execute_run(force=False):
+    # Before anything expensive: a missing or half-filled profile means the agent
+    # would tailor into boxes nobody confirmed.
+    problems = _profile_problems()
+    if problems:
+        for problem in problems:
+            print(f"[run] {problem}", file=sys.stderr)
+        print("[run] run `jobs init` to point the agent at your Canva CV.",
+              file=sys.stderr)
+        return 1
+
     try:
         ensure_database()
     except Exception as exc:                      # noqa: BLE001 - report and stop
@@ -326,6 +347,14 @@ def command_setup():
     """Install everything, once. Idempotent: re-running repairs a partial install."""
     load_dotenv()
 
+    problems = _profile_problems()
+    if problems:
+        print("Not ready to install yet:")
+        for problem in problems:
+            print(f"  {problem}")
+        print("Run `jobs init` to point the agent at your Canva CV.")
+        return 1
+
     print("Starting Postgres...")
     try:
         # Fatal here, unlike in `run`: setup is watched by a human who can act on
@@ -373,6 +402,100 @@ def command_setup():
     return 0
 
 
+def _read_design(design):
+    """(design_id, title, payload). Isolated so tests can replace Canva entirely."""
+    import asyncio
+
+    from jobsearch.agent import canva_read
+    return asyncio.run(canva_read.read_design(design))
+
+
+def _label(elements):
+    """element_id -> role. Isolated so tests can replace the model entirely."""
+    import asyncio
+
+    from jobsearch.agent import discover
+    return asyncio.run(discover.label_blocks(elements))
+
+
+def command_init(design=None, force=False):
+    """Point the agent at this user's Canva CV. Run once, before `jobs setup`.
+
+    Needs no database: it touches Canva, the model and two files, so it can run
+    on a machine where nothing else is installed yet.
+    """
+    load_dotenv()
+    from jobsearch.agent import discover
+    from jobsearch.resume import base_cv, canva, profile
+
+    print("Checking Canva access...")
+    try:
+        design_id, title, payload = _read_design(design)
+    except Exception as exc:                      # noqa: BLE001 - report and stop
+        # Canva is authorised by OAuth held in ~/.claude, not by a key in .env,
+        # so the only fix is an interactive authorisation. `setup` proves the
+        # Gmail password the same way and for the same reason: better to fail on
+        # the operator's screen than silently at 09:00 three weeks later.
+        print(f"  Could not read the design: {exc}\n"
+              f"  If Canva is not authorised on this machine, run `claude` once "
+              f"and approve the Canva connection, then try again.")
+        return 1
+
+    pages = payload.get("pages") or []
+    if len(pages) > 1:
+        print(f"\n  This design has {len(pages)} pages. The agent tailors a "
+              f"single page.\n  Use a one-page version, or keep everything the "
+              f"agent edits on page 1.")
+        return 1
+    page_id = pages[0].get("page_id") if pages else None
+
+    elements = canva.parse_elements(payload.get("richtexts"))
+    print(f'\nReading "{title}"...\n  1 page - {len(elements)} text blocks\n')
+
+    print("Identifying sections...")
+    labels = _label(elements)
+    built = discover.build_profile(labels, elements, design_id, page_id, title)
+    problems = discover.structural_problems(labels, elements)
+
+    profile.save(built)
+    print(f"  Wrote {config.PROFILE_PATH.name}   {len(built['slots'])} editable "
+          f"slots, {len(built['locked'])} locked")
+
+    if problems:
+        for problem in problems:
+            print(f"  x {problem}")
+        print("\nThe profile was written anyway so you can fill the gap by hand.\n"
+              "Until then `jobs run` will refuse to start.")
+        return 1
+
+    if config.BASE_CV_PATH.exists() and not force:
+        print(f"  ! {config.BASE_CV_PATH.name} already exists - not overwritten.\n"
+              f"    Use `jobs init --force` to regenerate it, which discards any "
+              f"edits you have made.")
+    else:
+        text = base_cv.render_base_cv(discover.build_resume(labels, elements))
+        config.BASE_CV_PATH.write_text(text, encoding="utf-8")
+        print(f"  Wrote {config.BASE_CV_PATH.name}   ({len(text):,} bytes)")
+
+        # The lossless contract, checked rather than assumed: a block that never
+        # reached the file would be invisible, and nobody can review text that
+        # is not there.
+        gaps = discover.coverage_gaps(elements, text, labels)
+        if gaps:
+            print(f"  ! {len(gaps)} of {len(elements)} blocks did not make it into "
+                  f"the file: {', '.join(gaps[:6])}"
+                  f"{' ...' if len(gaps) > 6 else ''}")
+        else:
+            print(f"  All {len(elements)} blocks captured")
+
+    print("\nNEXT: open base_cv.md and check it.\n"
+          "  It is the source of truth for every honesty check the agent makes -\n"
+          "  which skills it may claim, and how many bullets each job has.\n"
+          "  Text pulled out of a design can arrive garbled, so read it once.\n\n"
+          "Then run `jobs setup` to install the database and the daily schedule.")
+    return 0
+
+
 def command_pdf(job_id, open_after=True):
     """Write one stored CV under output/<run date>/ and open it.
 
@@ -404,6 +527,14 @@ def main(argv=None):
     parser = argparse.ArgumentParser(
         prog="jobs", description="Daily job search, tailoring, and digest.")
     subparsers = parser.add_subparsers(dest="command")
+    init_parser = subparsers.add_parser(
+        "init", help="point the agent at your Canva CV (run once, first)")
+    init_parser.add_argument(
+        "design", nargs="?",
+        help="Canva design id or URL; omit to let it find your CV")
+    init_parser.add_argument(
+        "--force", action="store_true",
+        help="regenerate base_cv.md, discarding your edits")
     subparsers.add_parser("setup", help="install: database, schema, 9am task")
     run_parser = subparsers.add_parser(
         "run", help="run one day's search (the scheduled task calls this)")
@@ -414,6 +545,8 @@ def main(argv=None):
     pdf_parser.add_argument("job_id", help="the id shown in the digest email")
 
     args = parser.parse_args(argv)
+    if args.command == "init":
+        return command_init(args.design, force=args.force)
     if args.command == "setup":
         return command_setup()
     if args.command == "run":

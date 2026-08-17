@@ -15,6 +15,7 @@ from jobsearch.config import (
     SUMMARY_SECTION,
 )
 from jobsearch.agent.jobs import normalize_posting
+from jobsearch.resume import profile
 from jobsearch.resume.base_cv import parse_resume
 from jobsearch.resume.render import pdf_filename
 from jobsearch.resume.tailoring import (
@@ -254,7 +255,7 @@ def prepare_resume(job, score, tailored):
     base_entries = experience_section.entries if experience_section else []
     for entry in tcv.experience:
         slot = f"experience.{entry.entry_index}.bullets"
-        if slot not in config.CANVA_ELEMENT_MAP:
+        if slot not in profile.slots():
             continue                      # entry exists in base_cv but not in the design
         base_bullets = base_entries[entry.entry_index].bullets
         if len(entry.bullets) != len(base_bullets):
@@ -285,7 +286,7 @@ def prepare_resume(job, score, tailored):
                 f"limit {_summary_limit(original_summary)} (the base summary is "
                 f"{len(original_summary)}). Shorten it and call prepare_resume again.")
 
-    operations = canva.build_operations(edits, config.CANVA_ELEMENT_MAP)
+    operations = canva.build_operations(edits, profile.slots())
     return {"rejected": False, "reason": "", "corrections": notes, "edits": edits,
             "operations": operations}
 

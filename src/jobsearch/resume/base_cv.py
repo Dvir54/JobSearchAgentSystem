@@ -78,6 +78,34 @@ def _parse_entries(lines: list[str]) -> list[Entry]:
     return entries
 
 
+def render_base_cv(parsed: ParsedResume) -> str:
+    """The inverse of parse_resume. `jobs init` writes the file this produces.
+
+    Round-tripping is the contract: parse_resume(render_base_cv(x)) == x. The
+    guards read this file back to decide what a draft may claim, so a writer that
+    drifted from the parser would check a user's honesty against text they never
+    wrote.
+    """
+    lines: list[str] = []
+    if parsed.preamble:
+        lines.append(parsed.preamble)
+        lines.append("")
+    for section in parsed.sections:
+        lines.append(f"## {section.name}")
+        lines.append("")
+        if section.entries:
+            for entry in section.entries:
+                lines.append(entry.anchor)
+                lines.append("")
+                for bullet in entry.bullets:
+                    lines.append(f"- {bullet}")
+                lines.append("")
+        elif section.body:
+            lines.append(section.body)
+            lines.append("")
+    return "\n".join(lines).rstrip("\n") + "\n"
+
+
 def parse_resume(text: str) -> ParsedResume:
     lines = text.splitlines()
 

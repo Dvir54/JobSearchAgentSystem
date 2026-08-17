@@ -1,6 +1,60 @@
 from pathlib import Path
 
-from jobsearch.resume.base_cv import Entry, ParsedResume, Section, parse_resume
+from jobsearch.resume.base_cv import (
+    Entry,
+    ParsedResume,
+    Section,
+    parse_resume,
+    render_base_cv,
+)
+
+_SAMPLE = """# Dana Levi
+
+dana@example.com
+
+## About Me
+
+Final-year CS student with backend experience.
+
+## Work Experience
+
+### Backend Developer | Acme
+*2024 - now*
+
+- Built REST APIs in Python
+- Cut p95 latency by 40%
+
+### Intern | Beta
+*2023*
+
+- Wrote automation scripts
+
+## Skills
+
+Python, SQL, Docker
+"""
+
+
+def test_rendering_a_parsed_cv_reproduces_it():
+    """The round-trip invariant. `jobs init` generates this file and the guards
+    read it back, so writer and parser must agree exactly — otherwise a user's
+    honesty checks run against text they never wrote."""
+    parsed = parse_resume(_SAMPLE)
+    assert parse_resume(render_base_cv(parsed)) == parsed
+
+
+def test_rendered_output_uses_canonical_headings():
+    rendered = render_base_cv(parse_resume(_SAMPLE))
+    assert "## About Me" in rendered
+    assert "## Work Experience" in rendered
+    assert "## Skills" in rendered
+
+
+def test_entries_keep_their_anchor_and_bullets():
+    rendered = render_base_cv(parse_resume(_SAMPLE))
+    assert "### Backend Developer | Acme" in rendered
+    assert "*2024 - now*" in rendered
+    assert "- Cut p95 latency by 40%" in rendered
 
 SAMPLE = (Path(__file__).parent / "fixtures" / "sample_cv.md").read_text(encoding="utf-8")
 

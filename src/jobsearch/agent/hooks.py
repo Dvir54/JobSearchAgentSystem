@@ -13,6 +13,7 @@ import re
 import sys
 
 from jobsearch.resume import canva
+from jobsearch.resume import profile
 from jobsearch import config
 from jobsearch.agent import tooling
 from jobsearch.resume.base_cv import parse_resume
@@ -58,7 +59,7 @@ _CANVA_WRITE_TOOL = "mcp__canva__perform-editing-operations"
 
 
 def _skills_element_id():
-    return config.CANVA_ELEMENT_MAP["skills"]
+    return profile.slots()["skills"]
 
 
 _BULLETS_SLOT_RE = re.compile(r"^experience\.(\d+)\.bullets$")
@@ -67,7 +68,7 @@ _BULLETS_SLOT_RE = re.compile(r"^experience\.(\d+)\.bullets$")
 def _bullet_entry_index_by_element():
     """element_id -> entry_index, for every mapped `experience.N.bullets` slot."""
     result = {}
-    for slot, eid in config.CANVA_ELEMENT_MAP.items():
+    for slot, eid in profile.slots().items():
         match = _BULLETS_SLOT_RE.match(slot)
         if match:
             result[eid] = int(match.group(1))
@@ -286,8 +287,7 @@ async def reduce_canva_output(input, tool_use_id, context):
         # any time. If one has vanished the template drifted, and writing anyway
         # puts text in the wrong box on a CV bound for an employer — silently,
         # because Canva reports success for a replacement that matched nothing.
-        problems = canva.validate_map(elements, config.CANVA_ELEMENT_MAP,
-                                      config.CANVA_VALIDATE_ONLY_IDS)
+        problems = canva.validate_map(elements, profile.slots(), profile.locked())
         reduced = {"transaction_id": transaction_id,
                    "page_id": pages[0].get("page_id") if pages else None,
                    "pages": pages,

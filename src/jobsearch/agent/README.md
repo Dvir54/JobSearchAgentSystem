@@ -14,6 +14,8 @@ package.
 | `tooling.py` | What those tools actually do, and the payload reducer. |
 | `hooks.py` | Intercepts tool traffic: reduces what comes back, guards what goes out. |
 | `jobs.py` | Turns raw scraper JSON into a clean posting. |
+| `discover.py` | Reads a Canva CV once, at setup, and works out which box is which. |
+| `canva_read.py` | Opens a design to read it, and cancels. Never commits. |
 
 ---
 
@@ -102,3 +104,42 @@ Two separate ceilings apply to tool traffic, and they are not the same one:
 
 The budgets in `config.py` sit inside both limits, so an unusual run fails loudly instead of
 quietly losing most of its work.
+
+---
+
+## Reading a CV once, at setup
+
+`jobs init` has to answer a question the design itself doesn't state: which text box is the
+summary, and which holds the second job's bullets? Positions and text are available; meaning
+is not.
+
+That judgement is made **once and then frozen** into `profile.json`. Re-deciding it every
+morning would let the same CV tailor differently on different days — precisely the
+inconsistency the guards exist to prevent — and would pay for the same answer daily.
+
+Two rules do most of the work, and only one of them involves a model.
+
+**Labelling** asks Claude what each block is: the summary, the skills, a job's bullets, a
+project, a section heading, or something else. It only has to be right about the three roles
+the agent can edit, because those are the only ones with a guard behind them. Anything
+unparseable, invented or omitted degrades to `other`, which is locked — the failure mode has
+to be *"did not tailor"*, never *"tailored the wrong box"*.
+
+**Placement** is geometry, and it carries everything else. Blocks are grouped into columns by
+transitive horizontal overlap, so a two-column CV yields two groups. A heading owns the blocks
+below it *in its own column*; a block above every heading in its column is header material.
+Geometry generalises across unfamiliar designs far better than recognising that "Perfil",
+"Profile" and "Career Summary" mean the same thing.
+
+## The generated CV is lossless
+
+**Every text block in the design ends up somewhere in `base_cv.md`.** Labelling decides where a
+block goes and whether it is editable — never whether it survives.
+
+That inversion matters on a CV nobody has seen before. An extractor that keeps only what it
+recognises discards the rest silently, and nobody can review text that isn't there. Here a
+misjudged block lands in the wrong section instead: visible in the file, and fixed by editing
+markdown rather than by hunting element ids.
+
+`coverage_gaps()` asserts it and `jobs init` reports it — *"All 40 blocks captured"*. Anything
+genuinely unattributable lands under `## Additional` rather than in the bin.

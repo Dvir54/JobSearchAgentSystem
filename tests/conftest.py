@@ -5,11 +5,29 @@ is that Postgres enforces dedup through a primary key; a mock would test the moc
 Tests skip with a clear message when the container is not up, so a developer
 without Docker running gets a skip rather than a wall of errors.
 """
+from pathlib import Path
+
 import psycopg
 import pytest
 
 from jobsearch import config
 from jobsearch import db
+
+FIXTURE_PROFILE = Path(__file__).parent / "fixtures" / "profile.json"
+
+
+@pytest.fixture(autouse=True)
+def _fixture_profile(monkeypatch):
+    """Every test runs against a known profile, never the developer's own.
+
+    Without this the suite would depend on whichever Canva design happens to be
+    configured on the machine running it.
+    """
+    from jobsearch.resume import profile
+    monkeypatch.setattr(config, "PROFILE_PATH", FIXTURE_PROFILE)
+    profile.reset_cache()
+    yield
+    profile.reset_cache()
 
 
 def _ensure_test_database():

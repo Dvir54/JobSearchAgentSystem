@@ -5,9 +5,10 @@ still fits on the page.
 
 | File | Responsibility |
 |---|---|
-| `base_cv.py` | Reads `base_cv.md` into sections and indexed entries. |
+| `base_cv.py` | Reads `base_cv.md` into sections and entries — and writes it back. |
 | `tailoring.py` | The truthfulness guards. |
 | `canva.py` | Element geometry, capacity, overflow detection. |
+| `profile.py` | Which text box in this user's design is which. |
 | `render.py` | Filenames for exported PDFs. |
 
 This package depends on nothing but `config`. You can load, read and test the CV logic
@@ -22,9 +23,13 @@ Your CV exists twice, deliberately.
 **Canva holds the design** — the layout, fonts and spacing of the document an employer
 actually receives. **`base_cv.md` holds the facts** — your real experience, in plain text.
 
+`jobs init` generates that file from your design once, and from then on it is yours to edit.
+The agent reads it every run and never writes to it.
+
 The tailoring writes into Canva. The truthfulness checks read `base_cv.md`. They have to be
 separate: you cannot validate a write by inspecting the thing you just wrote to. If the
-guards read the Canva design, a fabricated bullet would simply confirm itself.
+guards read the Canva design, a fabricated bullet would simply confirm itself — which is also
+why `init` is a one-time bootstrap and not a live link.
 
 Keep the two in step. When your real CV changes, update both — the text here, the layout
 there. If they drift apart, drafts start getting rejected for content the design no longer
@@ -75,17 +80,21 @@ Two behaviours of the Canva API shape the code here, and both are silent failure
 
 ---
 
-## The template
+## The design, and the profile that describes it
 
-Copies are made from a **pinned template**, never from your live master CV, so editing your
-own résumé can't disturb a run in progress.
+Copies are made from the design named in `profile.json`, never edited in place, so your master
+CV can't be disturbed by a run.
 
-The code addresses individual text boxes by id. If the template is redesigned those ids
-change, and a map pointing at boxes that no longer exist would put your summary where your
-skills should be — silently, given the API behaviour above. So the map is verified against the
-live design at the start of every edit, and a mismatch cancels the job rather than guessing.
+The code addresses individual text boxes by id, and `profile.py` holds the map: four editable
+slots — summary, skills, and one per job's bullets — and every other box explicitly locked.
+`jobs init` writes it; nothing else does.
 
-Every copy inherits the template's name, so all of a run's CVs share one title in Canva. The
-Canva API offers no way to rename a design and no way to name a copy, so the template's own
-name is the only lever. The PDFs themselves are named per job — company, title and job id —
-which is what you actually send.
+If the design is redesigned those ids change, and a map pointing at boxes that no longer exist
+would put your summary where your skills should be — silently, given the API behaviour above.
+So the map is verified against the live design at the start of every edit, and a mismatch
+cancels the job and tells you to re-run `jobs init`.
+
+Every copy inherits the design's name, so all of a run's CVs share one title in Canva. The
+Canva API offers no way to rename a design and no way to name a copy, so the design's own name
+is the only lever. The PDFs themselves are named per job — company, title and job id — which
+is what you actually send.

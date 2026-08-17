@@ -115,13 +115,29 @@ GMAIL_APP_PASSWORD=sixteencharacters
 The Gmail app password comes from Google Account → Security → App passwords, and needs
 2-step verification switched on.
 
-Put your résumé at the repo root as `base_cv.md` (git-ignored). **Canva supplies the layout;
-`base_cv.md` supplies the facts.** It is what the agent may reword, and what the truthfulness
-guards diff against to catch an invented skill or a fabricated bullet. That check cannot read
-from Canva, because Canva is the thing being written to — you cannot validate a write against
-its own target.
+Then point the agent at your CV:
 
-Then:
+```bash
+jobs init
+```
+
+It opens your Canva design (read-only — it starts an editing transaction purely to read the
+element ids, then cancels), works out which text box is your summary, your skills and each
+job's bullets, and writes two files:
+
+- **`profile.json`** — which box is which. Four editable slots; every other box is locked.
+- **`base_cv.md`** — your CV as markdown, and **everything in the design ends up in it**. The
+  command tells you so: *"All 40 blocks captured"*.
+
+**Read `base_cv.md` before your first run.** It is the source of truth for every honesty check
+the agent makes — which skills it may claim, how many bullets each job has. Canva supplies the
+layout; this file supplies the facts. The guards diff against it precisely because it *isn't*
+the thing being written to: you cannot validate a write against its own target.
+
+From then on the file is yours. Edit it whenever your career changes; the agent reads it and
+never rewrites it.
+
+Finally:
 
 ```bash
 jobs setup
@@ -132,10 +148,30 @@ password actually works, registers the scheduled task, and tells you whether you
 will let it wake the machine. Safe to re-run — it repairs a partial install rather than
 complaining about one.
 
-## The three commands
+### What Canva is asked for
+
+`jobs init` opens your browser once so you can authorise it against **your own** Canva account.
+The consent screen asks to read and write designs, folders and assets. The token lives in your
+home directory, never in this repository, which is why the same code works for anyone.
+
+### Will it work with your CV?
+
+Ten-second check: open your CV in Canva and click one of your bullet points.
+
+- it selects **the whole job block**, or **all the bullets** → you're fine
+- it selects **only that one line** → each bullet is its own text box, and `init` will refuse
+
+Same test on a skill: the whole list should highlight, not one word.
+
+`init` refuses, with an explanation, on multi-page designs, bullets split one per box, and
+skills split into separate chips. It refuses rather than half-supporting them, because a CV
+that's wrong in the wrong box is worse than one that was never tailored.
+
+## The four commands
 
 | Command | What it does |
 |---|---|
+| `jobs init` | Point the agent at your Canva CV. Run once, first. `--force` regenerates `base_cv.md`. |
 | `jobs setup` | Install everything, once. Idempotent — re-running repairs a partial install. |
 | `jobs run` | One day's work. The scheduled task calls this; add `--force` to re-run a finished day. |
 | `jobs pdf <id>` | Write one stored CV to `output/<run date>/` and open it. |
@@ -161,6 +197,8 @@ down: the one class of failure nothing inside the program can report. Check
   afterwards, so jobs posted on a day the machine never came on are never seen.
 - **Name Canva designs per job.** `copy-design` has no title parameter and the API has no
   rename, so every copy inherits the template's name.
+- **Tailor a two-page CV**, bullets split one per text box, or skills split into chips.
+  `jobs init` refuses these and says why.
 
 ---
 

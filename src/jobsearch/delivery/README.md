@@ -2,9 +2,14 @@
 
 | File | Responsibility |
 |---|---|
-| `cli.py` | The `jobs` command: `setup`, `run`, `pdf`. The shape of a run. |
+| `cli.py` | The `jobs` command: `init`, `setup`, `run`, `pdf`. The shape of a run. |
 | `mailer.py` | Renders and sends the daily digest. |
 | `scheduling.py` | Registers the scheduled task. |
+
+`jobs init` runs once, before anything is installed: it reads the user's Canva CV and writes
+the profile and `base_cv.md`. It needs no database, so it works on a machine where nothing
+else is set up yet — and both `setup` and `run` refuse to proceed without a usable profile,
+naming what is missing.
 
 `cli.py` orchestrates and decides nothing of substance. Its job is the run's *shape*: get the
 database up, check whether today is already done, open the run row, drive the session, close

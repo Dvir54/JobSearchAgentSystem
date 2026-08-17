@@ -5,7 +5,7 @@
 .venv/Scripts/python.exe -m pytest -k pdf   # one slice
 ```
 
-266 tests, one file per module. Flat rather than mirroring the package tree — at this size a
+325 tests, one file per module. Flat rather than mirroring the package tree — at this size a
 mirror costs navigation without adding any.
 
 ---
@@ -22,6 +22,8 @@ mirror costs navigation without adding any.
 | `test_cli` | Run shape: preflight, the once-per-day guard, exit codes, digest on every path |
 | `test_scheduling` | The task carries all three triggers and the settings that let it wake a laptop |
 | `test_mailer` | All three digest flavours, with every field escaped |
+| `test_discover` | Reading any user's design: column grouping, section placement, the refusals, and that nothing in a design is dropped |
+| `test_profile` | The per-user map: validation, and that no Canva identity is left in the source |
 
 ---
 
