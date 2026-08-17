@@ -7,6 +7,14 @@ Two modules sit at the root because everything else depends on them.
 | `config.py` | Every tunable setting, path and measured limit. No logic. |
 | `db.py` | Every SQL statement in the system. |
 
+Configuration comes in two halves, and the split is deliberate. **`config.py` describes the
+agent** — role queries, the fit threshold, the search window, measured API limits. **`profile.json`
+describes one person's CV** — which Canva design, and which text box is the summary, the skills
+and each job's bullets. It is written by `jobs init` and git-ignored.
+
+Nothing in the source identifies whose CV is being tailored. That is what lets the same
+repository work for anyone, and why publishing it exposes nobody's résumé.
+
 Then three packages, each with its own README:
 
 - **[`agent/`](agent/README.md)** — the autonomous session: what Claude sees, what it may do,

@@ -30,6 +30,29 @@ one-time setup step works out the rest.
 
 ---
 
+## Amended during implementation
+
+Three things changed once this met a real design. Recorded here because the reasoning is the
+useful part.
+
+**The generated CV is lossless.** As specified, `build_resume` kept the roles it recognised and
+discarded the rest — which on the author's own CV silently dropped his email, location, links
+and job title. An omission cannot be reviewed, because there is nothing there to read. Inverted:
+every text block is placed somewhere, and labelling decides *where* a block goes and whether it
+is editable, never whether it survives. `coverage_gaps()` asserts it and `init` reports it.
+
+**Placement is by column identity, not overlap with a heading's box.** A heading rarely spans its
+own column: "Education" occupied x 342-548 while its degree dates sat at 681-767. Blocks are now
+grouped into columns by transitive horizontal overlap, and a heading owns what is below it in its
+column. A block above every heading in its column is header material; a block in a column with no
+headings at all is the only thing that reaches `## Additional`.
+
+**The label vocabulary is larger than three roles.** Job titles and dates must be identified to
+write the markdown at all, even though nothing edits them — and projects need `project.N.title`
+and `project.N.tech`, because loose paragraphs under a Projects heading are invisible to the
+agent, which then drafts without knowing what the candidate has built. Only `summary`, `skills`
+and `experience.N.bullets` are ever written to; everything else is locked.
+
 ## Decisions
 
 | Decision | Choice |
