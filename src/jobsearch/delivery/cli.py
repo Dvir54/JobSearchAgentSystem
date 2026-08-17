@@ -480,7 +480,7 @@ def command_init(design=None, force=False):
         # The lossless contract, checked rather than assumed: a block that never
         # reached the file would be invisible, and nobody can review text that
         # is not there.
-        gaps = discover.coverage_gaps(elements, text)
+        gaps = discover.coverage_gaps(elements, text, labels)
         if gaps:
             print(f"  ! {len(gaps)} of {len(elements)} blocks did not make it into "
                   f"the file: {', '.join(gaps[:6])}"

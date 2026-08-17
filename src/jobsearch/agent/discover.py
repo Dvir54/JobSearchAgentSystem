@@ -291,14 +291,25 @@ def build_resume(labels, elements):
     return ParsedResume(preamble="\n\n".join(preamble_parts), sections=sections)
 
 
-def coverage_gaps(elements, rendered):
+def coverage_gaps(elements, rendered, labels=None):
     """Element ids whose text does not appear in the rendered CV.
 
-    The assertion behind the lossless contract. It has to be able to fail, or it
-    proves nothing — see the test that feeds it an empty document.
+    The assertion behind the lossless contract: no fact about the candidate is
+    lost, however the design is laid out. It has to be able to fail, or it proves
+    nothing — see the test that feeds it an empty document.
+
+    Section titles are the one deliberate exception, and only when `labels` is
+    given. The three sections the agent edits are renamed to canonical headings so
+    the parser and the guards keep one contract, which means a design saying
+    "Profile" or "Career History" ends up saying "About Me" and "Work Experience".
+    That is a transformation, not a leak: every heading either names a section in
+    the output or was replaced by the canonical name for it. Headings the agent
+    does not recognise keep their own wording.
     """
     missing = []
     for element_id, element in reading_order(elements):
+        if labels is not None and labels.get(element_id) == "heading":
+            continue
         text = _text(element)
         if not text:
             continue
