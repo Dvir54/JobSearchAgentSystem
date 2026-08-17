@@ -122,11 +122,45 @@ def build_profile(labels, elements, design_id, page_id, design_title):
 
 
 
-def _owning_heading(element, headings):
-    """The nearest heading above this block IN ITS OWN COLUMN, or None."""
+def columns(elements):
+    """element_id -> a column key, grouped by transitive horizontal overlap.
+
+    Two-column CVs are the norm, and a heading rarely spans its whole column: a
+    measured design had "Education" occupying x 342-548 while the degree dates
+    sat at 681-767 — same column, no overlap with the heading's own box. Asking
+    which COLUMN a block is in, rather than whether it overlaps a particular
+    heading, is what places those correctly.
+
+    Transitive, so a wide paragraph links the narrow boxes on either side of it
+    into one column. A block spanning the full page width would merge every
+    column into one; the result is then simply less precise, never lossy.
+    """
+    ids = [element_id for element_id, _ in reading_order(elements)]
+    parent = {element_id: element_id for element_id in ids}
+
+    def find(node):
+        while parent[node] != node:
+            parent[node] = parent[parent[node]]
+            node = parent[node]
+        return node
+
+    for index, left_id in enumerate(ids):
+        for right_id in ids[index + 1:]:
+            if _same_column(elements[left_id], elements[right_id]):
+                parent[find(left_id)] = find(right_id)
+    return {element_id: find(element_id) for element_id in ids}
+
+
+def _owning_heading(element_id, element, headings, column_of):
+    """The nearest heading above this block in its own column, or None.
+
+    None means the block sits above every heading in its column — the header
+    block of a CV, whatever else is happening in the other column.
+    """
     owner = None
     for heading_id, heading in headings:            # already in reading order
-        if heading["top"] <= element["top"] and _same_column(heading, element):
+        if (heading["top"] <= element["top"]
+                and column_of.get(heading_id) == column_of.get(element_id)):
             owner = heading_id
     return owner
 
@@ -150,7 +184,8 @@ def build_resume(labels, elements):
     ordered = reading_order(elements)
     headings = [(element_id, element) for element_id, element in ordered
                 if labels.get(element_id) == "heading"]
-    first_heading_top = headings[0][1]["top"] if headings else None
+    column_of = columns(elements)
+    columns_with_headings = {column_of[heading_id] for heading_id, _ in headings}
 
     def texts(label):
         return [_text(element) for element_id, element in ordered
@@ -191,12 +226,17 @@ def build_resume(labels, elements):
         text = _text(element)
         if not text:
             continue
-        owner = _owning_heading(element, headings)
+        owner = _owning_heading(element_id, element, headings, column_of)
         if owner is not None:
             bodies[owner].append(text)
-        elif first_heading_top is None or element["top"] < first_heading_top:
-            preamble_parts.append(text)     # the header block: name, contact, title
+        elif column_of.get(element_id) in columns_with_headings:
+            # Its column has sections and this sits above all of them: the CV's
+            # header block — name, title, contact — whatever the other column is
+            # doing at the same height.
+            preamble_parts.append(text)
         else:
+            # A column with no headings at all. Nothing to attribute it to, so it
+            # is kept visibly rather than guessed at.
             orphans.append(text)
 
     sections = [

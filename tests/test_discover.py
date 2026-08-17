@@ -337,3 +337,74 @@ def test_coverage_gaps_names_a_block_that_went_missing():
     # The assertion must be able to fail, or it proves nothing.
     _labels, elements = _messy_design()
     assert "mail" in discover.coverage_gaps(elements, "nothing here")
+
+
+def _real_geometry():
+    """A slice of a real two-column design, with measured coordinates.
+
+    Left column runs x 5-292, right column x 309-789. The three blocks that used
+    to fall through are all here: a job title in the left column below the right
+    column's first heading, and two narrow date boxes in the right column that
+    overlap no heading box at all.
+    """
+    def box(top, left, width, text):
+        return {"top": top, "left": left, "width": width, "height": 20.0,
+                "regions": [text]}
+
+    elements = {
+        "name":   box(37.0, 4.7, 287.1, "DVIR ITSHACOV"),
+        "abouth": box(64.2, 337.6, 205.8, "About Me"),
+        "title":  box(89.2, 10.3, 281.5, "Computer Science Student"),
+        "sum":    box(119.3, 314.8, 470.4, "A summary paragraph"),
+        "conth":  box(146.2, 42.5, 105.8, "Contact"),
+        "phone":  box(195.1, 42.5, 169.1, "+972-52-3867741"),
+        "wexph":  box(229.6, 339.8, 205.8, "Work Experience"),
+        "t0":     box(283.6, 315.9, 344.0, "Dev | Acme"),
+        "d0":     box(285.3, 666.3, 122.7, "Mar 2026 - present"),
+        "b0":     box(298.1, 309.4, 418.3, "Built a pipeline"),
+        "skh":    box(360.1, 42.5, 94.2, "Skills"),
+        "sk":     box(403.9, 4.7, 178.2, "Java"),
+        "eduh":   box(844.0, 342.3, 205.8, "Education"),
+        "deg":    box(909.8, 311.8, 231.5, "B.Sc. in Computer Science"),
+        "degy":   box(911.5, 681.0, 85.7, "2023 - 2027"),
+    }
+    labels = {"name": "name", "abouth": "heading", "title": "other",
+              "sum": "summary", "conth": "heading", "phone": "contact",
+              "wexph": "heading", "t0": "experience.0.title",
+              "d0": "experience.0.dates", "b0": "experience.0.bullets",
+              "skh": "heading", "sk": "skills",
+              "eduh": "heading", "deg": "other", "degy": "other"}
+    return labels, elements
+
+
+def test_a_narrow_date_box_joins_its_column_s_section():
+    """The date sits at x 681-767 while the Education heading spans only 342-548,
+    so they share no overlap — but both are in the right-hand column. Ownership
+    is decided by column, not by overlapping the heading's own box."""
+    labels, elements = _real_geometry()
+    parsed = discover.build_resume(labels, elements)
+    assert "2023 - 2027" in parsed.get("Education").body
+
+
+def test_header_material_in_the_other_column_reaches_the_preamble():
+    """The job title sits below the right column's first heading but above every
+    heading in its own column, which makes it header material."""
+    labels, elements = _real_geometry()
+    parsed = discover.build_resume(labels, elements)
+    assert "Computer Science Student" in parsed.preamble
+
+
+def test_the_real_layout_needs_no_additional_bin():
+    labels, elements = _real_geometry()
+    parsed = discover.build_resume(labels, elements)
+    assert parsed.get("Additional") is None
+    rendered = render_base_cv(parsed)
+    assert discover.coverage_gaps(elements, rendered) == []
+
+
+def test_columns_are_found_by_transitive_overlap():
+    labels, elements = _real_geometry()
+    columns = discover.columns(elements)
+    assert columns["name"] == columns["title"] == columns["sk"]
+    assert columns["sum"] == columns["degy"] == columns["eduh"]
+    assert columns["name"] != columns["sum"]
