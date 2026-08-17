@@ -13,7 +13,12 @@ even though nothing ever edits them.
 import json
 import re
 
-from jobsearch.config import EXPERIENCE_SECTION, SKILLS_SECTION, SUMMARY_SECTION
+from jobsearch.config import (
+    EXPERIENCE_SECTION,
+    PROJECTS_SECTION,
+    SKILLS_SECTION,
+    SUMMARY_SECTION,
+)
 from jobsearch.resume.base_cv import Entry, ParsedResume, Section
 
 # The roles the agent may rewrite.
@@ -21,6 +26,10 @@ EDITABLE = ("summary", "skills")
 # Labels that carry no index. Entry labels are matched separately.
 LABELS = ("summary", "skills", "name", "contact", "heading", "other")
 _ENTRY_RE = re.compile(r"^experience\.(\d+)\.(title|dates|bullets)$")
+# Projects are never rewritten, but they are what a junior candidate has
+# actually built — the agent drafts better when it can see them, and it only
+# sees structured entries.
+_PROJECT_RE = re.compile(r"^project\.(\d+)\.(title|tech)$")
 
 
 def reading_order(elements):
@@ -34,7 +43,9 @@ def reading_order(elements):
 
 
 def _is_label(label):
-    return label in LABELS or _ENTRY_RE.match(label or "") is not None
+    return (label in LABELS
+            or _ENTRY_RE.match(label or "") is not None
+            or _PROJECT_RE.match(label or "") is not None)
 
 
 def structural_problems(labels, elements):
@@ -211,7 +222,8 @@ def build_resume(labels, elements):
 
     spoken_for = {element_id for element_id, _ in ordered
                   if labels.get(element_id) in ("summary", "skills", "heading")
-                  or _ENTRY_RE.match(labels.get(element_id) or "")}
+                  or _ENTRY_RE.match(labels.get(element_id) or "")
+                  or _PROJECT_RE.match(labels.get(element_id) or "")}
 
     # --- everything else is placed, never dropped
     preamble_parts, orphans = [], []
@@ -239,6 +251,17 @@ def build_resume(labels, elements):
             # is kept visibly rather than guessed at.
             orphans.append(text)
 
+    project_entries = []
+    for index in sorted({int(_PROJECT_RE.match(label).group(1))
+                         for label in labels.values()
+                         if _PROJECT_RE.match(label or "")}):
+        title = first(f"project.{index}.title")
+        tech = first(f"project.{index}.tech")
+        anchor = f"### {title}" if title else f"### Project {index + 1}"
+        if tech:
+            anchor += f"\n{tech}"
+        project_entries.append(Entry(anchor=anchor, bullets=[]))
+
     sections = [
         Section(name=SUMMARY_SECTION, is_tailored=True, body=first("summary"),
                 entries=[]),
@@ -246,6 +269,9 @@ def build_resume(labels, elements):
         Section(name=SKILLS_SECTION, is_tailored=True, body=first("skills"),
                 entries=[]),
     ]
+    if project_entries:
+        sections.append(Section(name=PROJECTS_SECTION, is_tailored=True, body="",
+                                entries=project_entries))
     used = {section.name for section in sections}
     for heading_id, heading in headings:
         heading_name = _text(heading)
@@ -289,6 +315,8 @@ Return ONLY a JSON object mapping element_id to one of these labels:
   experience.N.title      job N's title line (N counts from 0, top to bottom)
   experience.N.dates      job N's date line
   experience.N.bullets    job N's bullet points
+  project.N.title         project N's name (N counts from 0, top to bottom)
+  project.N.tech          the technologies listed under project N
   name                    the person's name
   contact                 email, phone, links, location
   heading                 a section title such as "Projects", "Education",
@@ -300,8 +328,10 @@ Rules:
 - Number experience entries from 0, in the order they appear down the page.
 - A section title such as "Work Experience" or "Projects" is `heading`, never
   part of an entry.
-- The content under those titles is `other`: it is kept in the CV for context
-  but never rewritten.
+- Under a Projects heading, a short name on its own line is `project.N.title`
+  and the comma-separated list of technologies beneath it is `project.N.tech`.
+- Education, languages, volunteering and military service are `other`: kept in
+  the CV for context but never rewritten.
 - If unsure, answer `other`. A wrong `other` costs nothing; a wrong editable
   label rewrites the wrong part of someone's CV.
 

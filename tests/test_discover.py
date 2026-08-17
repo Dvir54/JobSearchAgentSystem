@@ -408,3 +408,56 @@ def test_columns_are_found_by_transitive_overlap():
     assert columns["name"] == columns["title"] == columns["sk"]
     assert columns["sum"] == columns["degy"] == columns["eduh"]
     assert columns["name"] != columns["sum"]
+
+
+def _with_projects():
+    labels, elements = _labelled()
+    elements.update({
+        "ph":  _el(600.0, 40.0, "Projects"),
+        "p0":  _el(620.0, 40.0, "Crypto Advisor"),
+        "p0t": _el(640.0, 40.0, "Python, FastAPI, PostgreSQL"),
+        "p1":  _el(660.0, 40.0, "Robotic Vacuum Simulation"),
+        "p1t": _el(680.0, 40.0, "Java, Multi-threading"),
+    })
+    labels.update({"ph": "heading",
+                   "p0": "project.0.title", "p0t": "project.0.tech",
+                   "p1": "project.1.title", "p1t": "project.1.tech"})
+    return labels, elements
+
+
+def test_projects_become_entries_not_loose_paragraphs():
+    labels, elements = _with_projects()
+    parsed = discover.build_resume(labels, elements)
+    entries = parsed.get("Projects").entries
+    assert len(entries) == 2
+    assert entries[0].anchor.startswith("### Crypto Advisor")
+    assert "Python, FastAPI, PostgreSQL" in entries[0].anchor
+    assert entries[1].anchor.startswith("### Robotic Vacuum Simulation")
+
+
+def test_the_agent_actually_sees_the_projects():
+    """The point of the exercise. Loose paragraphs under a Projects heading are
+    in the file but invisible to the model, which drafts without knowing what the
+    candidate has built."""
+    from jobsearch.agent.tooling import build_resume_view
+
+    labels, elements = _with_projects()
+    view = build_resume_view(render_base_cv(discover.build_resume(labels, elements)))
+    assert len(view["projects"]) == 2
+    assert "Crypto Advisor" in view["projects"][0]["anchor"]
+
+
+def test_projects_are_still_captured_in_full():
+    labels, elements = _with_projects()
+    rendered = render_base_cv(discover.build_resume(labels, elements))
+    assert discover.coverage_gaps(elements, rendered) == []
+
+
+def test_no_projects_section_when_a_cv_has_none():
+    labels, elements = _labelled()
+    assert discover.build_resume(labels, elements).get("Projects") is None
+
+
+def test_project_labels_are_part_of_the_vocabulary():
+    labels, elements = _with_projects()
+    assert discover.structural_problems(labels, elements) == []
