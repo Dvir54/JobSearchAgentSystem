@@ -1,11 +1,12 @@
 # Tests
 
 ```bash
+.venv/Scripts/pip install -e ".[dev]"       # pytest, once
 .venv/Scripts/python.exe -m pytest          # everything, about five seconds
 .venv/Scripts/python.exe -m pytest -k pdf   # one slice
 ```
 
-325 tests, one file per module. Flat rather than mirroring the package tree — at this size a
+340 tests, one file per module. Flat rather than mirroring the package tree — at this size a
 mirror costs navigation without adding any.
 
 ---
