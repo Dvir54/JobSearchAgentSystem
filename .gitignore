@@ -5,8 +5,10 @@
 base_cv.txt
 base_cv.md
 
-# Per-user Canva profile, written by `jobs init` — names one person's design
-profile.json
+# The per-user Canva profile, written by `jobs init` — names one person's design.
+# Anchored to the repo root: an unanchored pattern also swallowed the test
+# fixture, so the suite passed on a file that existed on one machine only.
+/profile.json
 
 # Python
 __pycache__/

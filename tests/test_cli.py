@@ -691,3 +691,15 @@ def test_setup_refuses_without_a_profile(pg, monkeypatch, tmp_path, capsys):
 def test_init_reports_that_every_block_was_captured(init_wired, capsys):
     assert cli.command_init("DAG1") == 0
     assert "All 3 blocks captured" in capsys.readouterr().out
+
+
+def test_init_requires_a_design_and_says_how_to_find_it(capsys):
+    """Guessing is the wrong default. Most people have a folder of Canva files,
+    and picking the wrong one silently points the agent at another document and
+    rewrites base_cv.md from it."""
+    with pytest.raises(SystemExit) as excinfo:
+        cli.main(["init"])
+    assert excinfo.value.code == 2
+    message = capsys.readouterr().err
+    assert "Share" in message or "share" in message
+    assert "canva.link" in message or "canva.com" in message

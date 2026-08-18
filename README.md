@@ -115,10 +115,11 @@ GMAIL_APP_PASSWORD=sixteencharacters
 The Gmail app password comes from Google Account → Security → App passwords, and needs
 2-step verification switched on.
 
-Then point the agent at your CV:
+Then point the agent at your CV. In Canva: open it, click **Share**, then **Copy link** —
+and pass that link:
 
 ```bash
-jobs init
+jobs init "https://canva.link/..."
 ```
 
 It opens your Canva design (read-only — it starts an editing transaction purely to read the

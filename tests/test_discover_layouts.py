@@ -233,3 +233,41 @@ def test_a_cv_with_no_extra_sections_at_all():
                     {"summary": "sum", "skills": "sk",
                      "experience.0.bullets": "b0"})
     assert parsed.get("Additional") is None
+
+
+def test_side_by_side_sections_keep_their_own_headings():
+    """A footer row of three boxes side by side — Volunteering, Military Service,
+    Languages — under a CV whose body blocks span the full page width.
+
+    Those wide blocks bridge all three groups into one column, so "the nearest
+    heading above" resolves to whichever is rightmost and all three sections
+    collapse into it. A heading that horizontally overlaps the block wins over
+    one that merely sits above it.
+    """
+    elements = {
+        # full-width body above, which is what merges the columns
+        "sum":  _box(150.0, 63.0, 667.0, "A summary paragraph"),
+        "eh":   _box(280.0, 63.0, 208.0, "Work Experience"),
+        "b0":   _box(320.0, 63.0, 694.0, "Did the work"),
+        "skh":  _box(890.0, 63.0, 208.0, "Key Skills"),
+        "sk":   _box(920.0, 63.0, 490.0, "Java, Python"),
+        # the footer row: three headings at the same height, three bodies below
+        "volh": _box(993.0, 63.0, 130.0, "Volunteering"),
+        "milh": _box(993.0, 369.0, 130.0, "Military service"),
+        "langh": _box(993.0, 631.0, 130.0, "Languages"),
+        "vol":  _box(1027.0, 63.0, 228.0, "Israel Fire and Rescue Services"),
+        "mil":  _box(1027.0, 356.0, 228.0, "IDF Marine Trooper"),
+        "lang": _box(1027.0, 633.0, 124.0, "Hebrew - Native"),
+    }
+    labels = {"sum": "summary", "eh": "heading", "b0": "experience.0.bullets",
+              "skh": "heading", "sk": "skills",
+              "volh": "heading", "milh": "heading", "langh": "heading",
+              "vol": "other", "mil": "other", "lang": "other"}
+
+    parsed = _check(labels, elements,
+                    {"summary": "sum", "skills": "sk",
+                     "experience.0.bullets": "b0"},
+                    ("Volunteering", "Military service", "Languages"))
+    assert "Israel Fire and Rescue" in parsed.get("Volunteering").body
+    assert "IDF Marine Trooper" in parsed.get("Military service").body
+    assert parsed.get("Languages").body == "Hebrew - Native"
