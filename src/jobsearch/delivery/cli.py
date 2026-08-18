@@ -418,7 +418,7 @@ def _label(elements):
     return asyncio.run(discover.label_blocks(elements))
 
 
-def command_init(design=None, force=False):
+def command_init(design, force=False):
     """Point the agent at this user's Canva CV. Run once, before `jobs setup`.
 
     Needs no database: it touches Canva, the model and two files, so it can run
@@ -529,12 +529,28 @@ def main(argv=None):
     subparsers = parser.add_subparsers(dest="command")
     init_parser = subparsers.add_parser(
         "init", help="point the agent at your Canva CV (run once, first)")
+    # Required, deliberately. Most people have a folder of Canva files, and
+    # guessing wrong points the agent at the wrong document and rewrites
+    # base_cv.md from it — silently, since the wrong CV still extracts fine.
     init_parser.add_argument(
-        "design", nargs="?",
-        help="Canva design id or URL; omit to let it find your CV")
+        "design",
+        help="your CV's Canva share link — in Canva: Share, then Copy link "
+             "(https://canva.link/... or https://www.canva.com/design/...)")
     init_parser.add_argument(
         "--force", action="store_true",
         help="regenerate base_cv.md, discarding your edits")
+
+    def _init_error(message):
+        """argparse says "the following arguments are required: design", which is
+        true and no use to someone who has never looked for a Canva link."""
+        init_parser.print_usage(sys.stderr)
+        print(f"jobs init: error: {message}\n\n"
+              f"Pass your CV's Canva share link. In Canva: open the CV, "
+              f"click Share, then Copy link.\n"
+              f'  jobs init "https://canva.link/..."', file=sys.stderr)
+        raise SystemExit(2)
+
+    init_parser.error = _init_error
     subparsers.add_parser("setup", help="install: database, schema, 9am task")
     run_parser = subparsers.add_parser(
         "run", help="run one day's search (the scheduled task calls this)")

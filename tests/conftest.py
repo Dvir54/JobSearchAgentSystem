@@ -17,14 +17,21 @@ FIXTURE_PROFILE = Path(__file__).parent / "fixtures" / "profile.json"
 
 
 @pytest.fixture(autouse=True)
-def _fixture_profile(monkeypatch):
+def _fixture_profile(monkeypatch, tmp_path):
     """Every test runs against a known profile, never the developer's own.
 
-    Without this the suite would depend on whichever Canva design happens to be
-    configured on the machine running it.
+    A COPY, in a temp directory: anything that calls profile.save() would
+    otherwise rewrite the committed fixture, which is exactly what happened once
+    when a test reached the real `jobs init`.
     """
     from jobsearch.resume import profile
-    monkeypatch.setattr(config, "PROFILE_PATH", FIXTURE_PROFILE)
+    # In a subdirectory: tests that patch PROFILE_PATH to tmp_path themselves
+    # would otherwise find this copy where they expect no profile at all.
+    working = tmp_path / "_fixture" / "profile.json"
+    working.parent.mkdir(exist_ok=True)
+    working.write_text(FIXTURE_PROFILE.read_text(encoding="utf-8"),
+                       encoding="utf-8")
+    monkeypatch.setattr(config, "PROFILE_PATH", working)
     profile.reset_cache()
     yield
     profile.reset_cache()

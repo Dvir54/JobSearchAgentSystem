@@ -68,8 +68,7 @@ You are helping set up a CV tailoring tool. Your work is read-only.
      target URL it returns — not the design id alone, because the URL carries the
      collaboration token that grants access to a design somebody else owns.
    - A full canva.com/design/... URL or a bare design id can be used directly.
-   - If they gave neither, use `search-designs` and pick the design whose title
-     most looks like a CV or resume.
+   - You are always given one. Never search for a different design.
 2. Call `start-editing-transaction` on it.
 3. Call `cancel-editing-transaction` immediately. NEVER commit, and never call
    `perform-editing-operations`. You are reading, not editing.
