@@ -163,17 +163,31 @@ def columns(elements):
 
 
 def _owning_heading(element_id, element, headings, column_of):
-    """The nearest heading above this block in its own column, or None.
+    """The heading this block belongs under, or None.
+
+    Among the headings above it in its column, one that also OVERLAPS it
+    horizontally wins over one that merely sits higher up the page. That matters
+    for a footer row of sections side by side — Volunteering, Military Service,
+    Languages — beneath a CV whose body spans the full page width. Those wide
+    blocks bridge the three groups into a single column, and "nearest above" then
+    resolves to whichever heading is rightmost, collapsing all three sections
+    into it.
+
+    The fallback still matters: a heading rarely spans its own column, so a narrow
+    date box off to one side overlaps no heading at all and belongs to the last
+    one above it.
 
     None means the block sits above every heading in its column — the header
-    block of a CV, whatever else is happening in the other column.
+    block of a CV, whatever the other column is doing at the same height.
     """
-    owner = None
-    for heading_id, heading in headings:            # already in reading order
-        if (heading["top"] <= element["top"]
-                and column_of.get(heading_id) == column_of.get(element_id)):
-            owner = heading_id
-    return owner
+    above = [(heading_id, heading) for heading_id, heading in headings
+             if heading["top"] <= element["top"]
+             and column_of.get(heading_id) == column_of.get(element_id)]
+    if not above:
+        return None
+    overlapping = [heading_id for heading_id, heading in above
+                   if _same_column(heading, element)]
+    return overlapping[-1] if overlapping else above[-1][0]
 
 
 def build_resume(labels, elements):

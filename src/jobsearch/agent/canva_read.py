@@ -22,6 +22,18 @@ from jobsearch.agent.hooks import _parse_payload, _slim
 _CANVA = {"canva": {"type": "http", "url": "https://mcp.canva.com/mcp"}}
 _START = "mcp__canva__start-editing-transaction"
 
+# Canva's Share button hands out canva.link/... shortlinks, so that is what a
+# user will paste. Nothing else accepts one — it has to be resolved to a design
+# URL first, and the collaboration token in that URL is what grants access to a
+# design somebody else owns.
+ALLOWED_TOOLS = [
+    "mcp__canva__resolve-shortlink",
+    "mcp__canva__search-designs",
+    "mcp__canva__get-design",
+    "mcp__canva__start-editing-transaction",
+    "mcp__canva__cancel-editing-transaction",
+]
+
 _CAPTURED = {}
 
 
@@ -50,9 +62,14 @@ async def capture_design(input, tool_use_id, context):
 _INSTRUCTIONS = """\
 You are helping set up a CV tailoring tool. Your work is read-only.
 
-1. Identify the Canva design the user names. If they gave an id or a URL, use it
-   with `get-design`. If they gave neither, use `search-designs` and pick the
-   design whose title most looks like a CV or resume.
+1. Identify the Canva design the user names.
+   - A shortlink such as https://canva.link/abc123 must be resolved FIRST with
+     `resolve-shortlink`, passing just the id after the slash. Then use the FULL
+     target URL it returns — not the design id alone, because the URL carries the
+     collaboration token that grants access to a design somebody else owns.
+   - A full canva.com/design/... URL or a bare design id can be used directly.
+   - If they gave neither, use `search-designs` and pick the design whose title
+     most looks like a CV or resume.
 2. Call `start-editing-transaction` on it.
 3. Call `cancel-editing-transaction` immediately. NEVER commit, and never call
    `perform-editing-operations`. You are reading, not editing.
@@ -90,9 +107,7 @@ async def read_design(design):
     options = ClaudeAgentOptions(
         system_prompt=_INSTRUCTIONS,
         mcp_servers=_CANVA,
-        allowed_tools=["mcp__canva__search-designs", "mcp__canva__get-design",
-                       "mcp__canva__start-editing-transaction",
-                       "mcp__canva__cancel-editing-transaction"],
+        allowed_tools=ALLOWED_TOOLS,
         disallowed_tools=["Bash", "Read", "Write", "WebFetch", "Agent"],
         max_turns=20,
         max_buffer_size=10 * 1024 * 1024,

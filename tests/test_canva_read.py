@@ -78,3 +78,12 @@ def test_an_unusable_reply_says_so():
     import pytest
     with pytest.raises(RuntimeError):
         canva_read.parse_reply("I could not find that design.")
+
+
+def test_the_session_may_resolve_a_shortlink():
+    """Canva's Share button hands out canva.link/... shortlinks, so that is the
+    normal thing for a user to paste into `jobs init` — not the exception. The
+    other tools cannot take one; it has to be resolved first."""
+    assert "mcp__canva__resolve-shortlink" in canva_read.ALLOWED_TOOLS
+    assert "canva.link" in canva_read._INSTRUCTIONS
+    assert "resolve-shortlink" in canva_read._INSTRUCTIONS
