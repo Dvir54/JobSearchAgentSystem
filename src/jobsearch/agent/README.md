@@ -17,6 +17,10 @@ package.
 | `discover.py` | Reads a Canva CV once, at setup, and works out which box is which. |
 | `canva_read.py` | Opens a design to read it, and cancels. Never commits. |
 
+The same reduction principle applies at setup: `canva_read` keeps the design payload in this
+process with a hook and hands the session a short receipt, so a 13-16KB design is never read
+and rewritten by a model that has no use for it.
+
 ---
 
 ## How one session runs
