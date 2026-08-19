@@ -1,100 +1,69 @@
-# `resume` — the CV domain
+# `resume`
 
-Everything about the CV itself: what it says, what may be changed, and whether the result
-still fits on the page.
+CV processing, validation, tailoring and Canva rendering.
+
+The package manages two parts of the candidate's CV:
+
+- **`base_cv.md`** — the source of truth for the candidate's experience and skills.
+- **Canva design** — the visual layout used for generated CVs.
+
+## Responsibilities
 
 | File | Responsibility |
 |---|---|
-| `base_cv.py` | Reads `base_cv.md` into sections and entries — and writes it back. |
-| `tailoring.py` | The truthfulness guards. |
-| `canva.py` | Element geometry, capacity, overflow detection. |
-| `profile.py` | Which text box in this user's design is which. |
-| `render.py` | Filenames for exported PDFs. |
+| `base_cv.py` | Parse and manage the base CV |
+| `tailoring.py` | Validate tailored CV content |
+| `canva.py` | Canva elements, geometry and page validation |
+| `profile.py` | Mapping between CV sections and Canva elements |
+| `render.py` | Generated CV output handling |
 
-This package depends on nothing but `config`. You can load, read and test the CV logic
-without touching the agent, the database or the network.
+## CV Tailoring
 
----
+The agent can adapt existing CV content to better match a job.
 
-## Two sources, one CV
+It cannot:
 
-Your CV exists twice, deliberately.
+- Invent skills or experience
+- Add unsupported experience
+- Change the number of existing job bullets
+- Modify locked CV elements
+- Produce a CV that exceeds the available page layout
 
-**Canva holds the design** — the layout, fonts and spacing of the document an employer
-actually receives. **`base_cv.md` holds the facts** — your real experience, in plain text.
+Tailored content is validated before the generated CV is committed.
 
-`jobs init` generates that file from your design once, and from then on it is yours to edit.
-The agent reads it every run and never writes to it.
+## Canva Workflow
 
-The tailoring writes into Canva. The truthfulness checks read `base_cv.md`. They have to be
-separate: you cannot validate a write by inspecting the thing you just wrote to. If the
-guards read the Canva design, a fabricated bullet would simply confirm itself — which is also
-why `init` is a one-time bootstrap and not a live link.
+```text
+Base CV
+   +
+Job Description
+   ↓
+AI-generated edits
+   ↓
+Content validation
+   ↓
+Canva design copy
+   ↓
+Layout validation
+   ↓
+PDF
+```
 
-Keep the two in step. When your real CV changes, update both — the text here, the layout
-there. If they drift apart, drafts start getting rejected for content the design no longer
-has room for.
+The original Canva résumé is never modified directly. Generated CVs are created from the configured base design.
 
----
+## Setup
 
-## What "tailored" is allowed to mean
+`jobs init` connects the Canva résumé and creates the local CV metadata required by the resume pipeline.
 
-Claude writes the wording. This package decides whether that wording is honest, and its
-answer is final:
+If the Canva design structure changes, run `jobs init` again to refresh the configuration.
 
-- **Skills must already be yours.** Anything not present in `base_cv.md` is stripped out and
-  reported, however plausible it looks next to the job description.
-- **Bullets are reworded one to one.** A draft that adds, drops, merges or splits a bullet is
-  rejected outright. Rephrasing your experience is allowed; inventing more of it is not.
-- **Length is budgeted.** Every piece of text is measured against the space the design gives
-  it before anything is sent, and a rejection states the actual and permitted lengths so the
-  next attempt is a correction rather than a guess.
+## Supported CV Structure
 
-A rejection isn't a failure of the run. The agent reads the reason, redrafts, and tries
-again — up to twice — before skipping the job and recording why.
+The current pipeline is designed for:
 
----
+- Single-page CVs
+- Editable text blocks
+- Job experience represented in supported text elements
+- Skills represented in supported text elements
 
-## Fitting the page
-
-A CV that overflows its page is worse than one that wasn't tailored, and neither Canva nor a
-character count will tell you it happened.
-
-`canva.py` works from the design's real geometry. Every text block's position and height are
-read from the live document, so the space available to a block is the distance to whatever
-sits below it. After an edit, the page is re-measured: if a block has grown into its
-neighbour, the edit is rejected and the draft is shortened.
-
-Character budgets exist too, but only as cheap prevention. They can't be the authority —
-reordering a skills list changes no lengths at all yet can still reflow a page, and a budget
-tight enough to catch that would reject every run.
-
-Two behaviours of the Canva API shape the code here, and both are silent failures if ignored:
-
-- Replacing a whole text block inherits the formatting of its **first** region. If that
-  region happens to be an empty spacer line, the replacement quietly loses every bullet
-  marker. Bullets are therefore replaced one at a time, matched on their own text.
-- A find-and-replace that matches **nothing** still reports success. So the reported result is
-  never trusted alone; the page is read back and checked for the text that was supposed to
-  land.
-
----
-
-## The design, and the profile that describes it
-
-Copies are made from the design named in `profile.json`, never edited in place, so your master
-CV can't be disturbed by a run.
-
-The code addresses individual text boxes by id, and `profile.py` holds the map: four editable
-slots — summary, skills, and one per job's bullets — and every other box explicitly locked.
-`jobs init` writes it; nothing else does.
-
-If the design is redesigned those ids change, and a map pointing at boxes that no longer exist
-would put your summary where your skills should be — silently, given the API behaviour above.
-So the map is verified against the live design at the start of every edit, and a mismatch
-cancels the job and tells you to re-run `jobs init`.
-
-Every copy inherits the design's name, so all of a run's CVs share one title in Canva. The
-Canva API offers no way to rename a design and no way to name a copy, so the design's own name
-is the only lever. The PDFs themselves are named per job — company, title and job id — which
-is what you actually send.
+Unsupported layouts are rejected during initialization rather than producing an invalid tailored CV.
