@@ -16,33 +16,41 @@ The tests cover the main application boundaries, including:
 From the project root:
 
 ```bash
-pytest
+.venv/Scripts/pip install -e ".[dev]"   # pytest, once
+.venv/Scripts/python.exe -m pytest
 ```
 
 Run with verbose output:
 
 ```bash
-pytest -v
+.venv/Scripts/python.exe -m pytest -v
 ```
 
 Run a specific test file:
 
 ```bash
-pytest tests/<test-file>.py
+.venv/Scripts/python.exe -m pytest tests/test_discover.py
 ```
 
 ## Test Environment
 
-Tests that require external services use the configured test environment and should not modify the candidate's production CV or database.
+The suite cannot touch the candidate's real data. Database tests run against a
+throwaway `jobs_test` database in the same container, truncated between tests,
+and the Canva profile is copied to a temporary directory before each test — so
+nothing that writes a profile can reach the committed fixture.
+
+Database tests skip with a clear message when the container is not running.
 
 Keep API credentials and other secrets out of the test suite.
 
 ## Test Structure
 
+One `test_*.py` per module, flat rather than mirroring the package tree. At this
+size a mirror costs navigation without adding any.
+
 ```text
 tests/
-├── agent/       # Agent and job evaluation tests
-├── resume/      # CV and Canva tests
-├── database/    # Persistence tests
-└── delivery/    # CLI and delivery tests
+├── conftest.py            # shared fixtures: test database, profile, offline dedup
+├── fixtures/              # recorded payloads and a sample profile
+└── test_*.py              # one per module
 ```
