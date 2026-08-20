@@ -13,7 +13,7 @@ The candidate reviews the results and decides which opportunities to pursue.
 
 ```text
 ┌──────────────┐
-│  Job Sources │
+│   LinkedIn   │
 └──────┬───────┘
        ↓
 ┌────────────────────┐
@@ -38,6 +38,10 @@ The candidate reviews the results and decides which opportunities to pursue.
 └────────────────────┘
 ```
 
+Postings come from LinkedIn, scraped through Monid's `harvestapi` endpoint and
+filtered at the source to Israel, entry-level roles, and the last 24 hours. Claude
+scores what survives that filter.
+
 For every relevant job, the agent provides:
 
 | | |
@@ -45,7 +49,8 @@ For every relevant job, the agent provides:
 | 🎯 **Fit score** | How closely the role matches the candidate |
 | 🧠 **AI reasoning** | Why the role is or isn't a good match |
 | 🔗 **Apply link** | Direct link to the job posting |
-| 📄 **CV ID** | Identifier for the tailored CV |
+| 🎨 **Canva link** | The tailored CV, open in Canva |
+| 📄 **Job ID** | Pass it to `jobs pdf` to export the tailored CV |
 
 ---
 
@@ -54,44 +59,32 @@ For every relevant job, the agent provides:
 A typical daily digest might look like:
 
 ```text
-4 new job matches
+Subject: 4 new job matches
 
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+Software Developer – AI & HR Automation — Check Point Software · fit 88
+Qualifications cap the role at up to two years of professional experience
+and focus on web applications, LLM/agent work, and API integrations.
+Apply:  https://www.linkedin.com/jobs/view/4452599968
+Canva:  https://www.canva.com/design/DAG.../edit
+PDF:    jobs pdf 4452599968
 
-Software Developer – AI & HR Automation
-Check Point Software · Fit 88
+AI Engineer / Full Stack Developer – LLM & RAG — recturicks · fit 84
+The role requires strong Python/React skills and hands-on LLM API work,
+which match the candidate's experience.
+Apply:  https://www.linkedin.com/jobs/view/4454746761
+Canva:  https://www.canva.com/design/DAG.../edit
+PDF:    jobs pdf 4454746761
 
-Qualifications cap the role at up to two years of
-professional experience and focus on web applications,
-LLM/agent work, and API integrations.
-
-→ Apply
-→ View CV
-  CV ID: 4452599968
-
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-
-AI Engineer / Full Stack Developer – LLM & RAG
-recturicks · Fit 84
-
-The role requires strong Python/React skills and
-hands-on LLM API work, which match the candidate's
-experience.
-
-→ Apply
-→ View CV
-  CV ID: 4454746761
+Scanned 87 postings in the last 24h · 61 already seen · 26 judged · 4 matched
 ```
+
+One email arrives every morning whichever way the run went — matches, nothing
+over the threshold, or a failure. Silence means the scheduler itself is broken.
 
 ### 📄 View a Generated CV
 
-Every tailored CV receives a unique ID:
-
-```bash
-jobs pdf <cv-id>
-```
-
-Example:
+Each match carries the posting's job ID. Pass it to `jobs pdf` to write that
+CV out under `output/<run-date>/` and open it:
 
 ```bash
 jobs pdf 4452599968
@@ -206,9 +199,11 @@ Send Email
 | Command | Description |
 |---|---|
 | `jobs init <canva-url>` | Connect the candidate's base CV |
+| `jobs init --force` | Regenerate `base_cv.md`, discarding your edits |
 | `jobs setup` | Initialize the system |
 | `jobs run` | Run a job-search cycle |
-| `jobs pdf <id>` | View or export a generated CV |
+| `jobs run --force` | Run even if today's search already finished |
+| `jobs pdf <id>` | Export a generated CV by job ID and open it |
 
 ---
 
@@ -249,7 +244,7 @@ Handles CLI commands and email notifications.
 | **Canva MCP** | CV generation & PDF export |
 | **PostgreSQL** | Persistence |
 | **Docker** | Local database environment |
-| **Monid** | Job discovery |
+| **Monid** | Job discovery — routes to the Apify harvestapi LinkedIn scraper |
 | **Gmail** | Daily digest |
 | **Pytest** | Testing |
 
