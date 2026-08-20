@@ -64,19 +64,19 @@ A typical daily digest might look like:
 
 **Software Developer – AI & HR Automation** — Check Point Software · fit 88  
 Qualifications cap the role at up to two years of professional experience and centre on web applications, LLM/agent work and API integrations — all directly evidenced by the candidate's React/TypeScript project, MCP and Claude Agent SDK work, and the REST-API pipeline built at IBM Research.  
-[Apply](https://www.linkedin.com/jobs/view/4452599968) · [View CV in Canva](https://www.canva.com/design/DAGexample/edit) · `jobs pdf 4452599968`
+[Apply](https://www.linkedin.com/jobs/view/4452599968) · [View CV in Canva](#) · `jobs pdf 4452599968`
 
 **AI Engineer / Full Stack Developer – LLM & RAG** — recruitricks · fit 84  
 The must-haves cap experience at two years and centre on strong Python/React plus hands-on LLM API and prompt work, all of which the candidate evidences through the IBM Python pipeline, the React/TypeScript app and the MCP-based agent project; RAG and retrieval evaluation are listed only as advantages and are learnable on the job.  
-[Apply](https://www.linkedin.com/jobs/view/4454746761) · [View CV in Canva](https://www.canva.com/design/DAGexample/edit) · `jobs pdf 4454746761`
+[Apply](https://www.linkedin.com/jobs/view/4454746761) · [View CV in Canva](#) · `jobs pdf 4454746761`
 
 **AI Creative Specialist** — MediaForce · fit 78  
 The posting states outright that this is a junior role and its core requirement — having actually built products and automations with AI coding tools such as Cursor and Claude Code — is exactly what the candidate did in the Job Search Agent project, with the performance-marketing and generative-media context being domain knowledge a motivated junior picks up on the job.  
-[Apply](https://www.linkedin.com/jobs/view/4452569518) · [View CV in Canva](https://www.canva.com/design/DAGexample/edit) · `jobs pdf 4452569518`
+[Apply](https://www.linkedin.com/jobs/view/4452569518) · [View CV in Canva](#) · `jobs pdf 4452569518`
 
 **Full Stack Engineer — Computational Pathology Platform** — DeePathology.ai · fit 72  
 The posting says outright it suits a strong computer-science student and most of what it asks for — solid Python, Docker, Git, Linux and quantitative parsing of large structured outputs — matches the candidate's IBM pipeline work, leaving model training and image processing as the gap, which is workable because the platform supplies its own annotation and training tooling.  
-[Apply](https://www.linkedin.com/jobs/view/4452811979) · [View CV in Canva](https://www.canva.com/design/DAGexample/edit) · `jobs pdf 4452811979`
+[Apply](https://www.linkedin.com/jobs/view/4452811979) · [View CV in Canva](#) · `jobs pdf 4452811979`
 
 <sub>Scanned 87 postings in the last 24h · 61 already seen · 26 judged · 4 matched</sub>
 
