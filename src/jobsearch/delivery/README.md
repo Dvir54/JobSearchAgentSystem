@@ -18,6 +18,7 @@ Initialize the candidate's CV:
 
 ```bash
 jobs init "<canva-resume-url>"
+jobs init "<canva-resume-url>" --force   # regenerate base_cv.md, discarding edits
 ```
 
 Initialize the system:
@@ -70,7 +71,16 @@ The agent sends one daily digest containing:
 - Fit scores
 - Evaluation summaries
 - Apply links
-- Generated CV IDs
+- Canva links to each tailored CV
+- The job ID to pass to `jobs pdf`
+
+It always closes with a stats line — postings scanned, already seen, judged,
+matched — so an empty morning is distinguishable from a broken one.
+
+The digest has three flavours off the run's status: matches, nothing over the
+threshold, and failed. One arrives every morning whichever it is, which makes
+silence itself the signal that the scheduler is broken. It is built from
+committed database rows, never from the agent's own summary of what it did.
 
 The email does not automatically apply to any job.
 

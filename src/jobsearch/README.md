@@ -41,11 +41,15 @@ User-specific CV configuration is kept separately from the source code and is cr
 ## Package Dependencies
 
 ```text
-delivery ──────┐
-               ├──→ agent ──→ resume
-agent ─────────┘
-                     ↓
-                   config
+delivery ──→ agent ──→ resume
+    │          │          │
+    ├──────────┴──────────┤
+    ↓                     ↓
+   db ────────────────→ config
 ```
+
+Dependencies point one way and never back. `delivery` reaches `agent`, but also
+`resume` and `db` directly — `cli.py` loads the profile and reads stored CVs
+without going through the agent.
 
 The resume package contains the core CV logic and can be tested independently of the agent, database and external services.

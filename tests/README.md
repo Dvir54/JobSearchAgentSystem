@@ -45,12 +45,19 @@ Keep API credentials and other secrets out of the test suite.
 
 ## Test Structure
 
-One `test_*.py` per module, flat rather than mirroring the package tree. At this
-size a mirror costs navigation without adding any.
+Flat, rather than mirroring the package tree. At this size a mirror costs
+navigation without adding any.
+
+Most files track a module — `test_canva.py`, `test_mailer.py`, `test_tooling.py`.
+The rest track a concern that cuts across modules, usually one a live run found
+the hard way: `test_guards.py` (truthfulness), `test_reduce.py` and
+`test_payload_ceiling.py` (payload size), `test_discover_layouts.py` (CV shapes
+that are nothing like the author's), `test_config_paths.py` (the repo-root
+anchor).
 
 ```text
 tests/
 ├── conftest.py            # shared fixtures: test database, profile, offline dedup
 ├── fixtures/              # recorded payloads and a sample profile
-└── test_*.py              # one per module
+└── test_*.py              # by module, or by concern
 ```
