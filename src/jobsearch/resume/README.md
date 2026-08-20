@@ -66,4 +66,4 @@ The current pipeline is designed for:
 - Job experience represented in supported text elements
 - Skills represented in supported text elements
 
-Unsupported layouts are rejected during initialization rather than producing an invalid tailored CV.
+A design with more than one page is refused outright — the agent tailors a single page. Other structural problems still write the profile, list what is missing, and block `jobs run` until you fill the gap by hand. Either way initialization fails loudly rather than producing an invalid tailored CV later.

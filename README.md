@@ -103,9 +103,16 @@ jobs pdf 4452599968
 
 ## Requirements
 
+- **Windows.** The agent registers a Windows scheduled task via `schtasks`, starts
+  Docker Desktop from its default install path, and opens exported PDFs with
+  `os.startfile`. There is no macOS or Linux path today.
 - **Python 3.11+**
 - **Docker Desktop**
-- **Canva account** with an editable résumé template
+- **Claude Code**, authorized on this machine. The agent runs on the Claude Agent
+  SDK, which drives the `claude` CLI — an API key on its own is not enough.
+- **Canva account** with an editable résumé template. Canva is reached through the
+  **Canva MCP server**, not an API key: run `claude` once and approve the Canva
+  connection before `jobs init`, or setup will stop at step 3.
 - **Anthropic API key**
 - **Monid API key**
 - **Gmail account** with an app password
@@ -148,6 +155,13 @@ Provide the share link to the Canva résumé that will be used as the base templ
 ```bash
 jobs init "<canva-resume-url>"
 ```
+
+This reads the design, records which text box is which, and writes `base_cv.md`.
+
+**Open `base_cv.md` and check it before going further.** It is the source of truth
+for every honesty check the agent makes — which skills it may claim, and how many
+bullets each job has. Text pulled out of a design can arrive garbled, so read it
+once. `jobs init --force` regenerates it, discarding any edits you have made.
 
 ---
 
@@ -205,9 +219,9 @@ src/jobsearch/
 
 ├── agent/       # Job discovery and AI evaluation
 ├── resume/      # CV processing and tailoring
-├── database/    # PostgreSQL persistence
 ├── delivery/    # CLI, email, and scheduling
-└── config.py    # Application configuration
+├── config.py    # Application configuration
+└── db.py        # PostgreSQL persistence
 ```
 
 ### Core Components
@@ -232,7 +246,7 @@ Handles CLI commands and email notifications.
 |---|---|
 | **Python 3.11+** | Application |
 | **Anthropic Claude** | Job evaluation & CV tailoring |
-| **Canva API** | CV generation & PDF export |
+| **Canva MCP** | CV generation & PDF export |
 | **PostgreSQL** | Persistence |
 | **Docker** | Local database environment |
 | **Monid** | Job discovery |
@@ -246,7 +260,7 @@ Handles CLI commands and email notifications.
 - Applications are **not submitted automatically**.
 - CV generation currently targets a **single-page Canva résumé**.
 - Generated CVs depend on the structure and editable content of the connected Canva template.
-- The system focuses on recent job postings and does not backfill missed daily runs.
+- Each run searches a 24-hour window, so postings older than that are not picked up.
 - PostgreSQL is required for persistent job and run history.
 
 ---
