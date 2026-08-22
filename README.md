@@ -9,6 +9,26 @@ The candidate reviews the results and decides which opportunities to pursue.
 
 ---
 
+## 📬 Example Run
+
+Output from a real daily run:
+
+<img src="docs/assets/daily-digest.png" alt="Daily Job Search Digest: four matches with fit score, reasoning, an apply link, a Canva link to the tailored CV, and the job ID" width="760">
+
+One email arrives every morning whichever way the run went — matches, nothing
+over the threshold, or a failure. Silence means the scheduler itself is broken.
+
+### 📄 View a Generated CV
+
+Each match carries the posting's job ID. Pass it to `jobs pdf` to write that
+CV out under `output/<run-date>/` and open it:
+
+```bash
+jobs pdf 4452599968
+```
+
+---
+
 ## ✨ How It Works
 
 ```text
@@ -42,6 +62,14 @@ Postings come from LinkedIn, scraped through Monid's `harvestapi` endpoint and
 filtered at the source to Israel, entry-level roles, and the last 24 hours. Claude
 scores what survives that filter.
 
+**LLM for judgment; deterministic code for enforcement.** Claude does the work
+that benefits from reasoning and writing: scoring each posting against the CV and
+drafting the tailored wording. Everything that must be repeatable stays in
+application code — location filtering, cross-run deduplication, PostgreSQL
+persistence, and the guards that reject a tailored CV claiming a skill the base CV
+does not support. Those guards run as hooks on the agent's own tool calls, so they
+hold whatever the model decides to write.
+
 For every relevant job, the agent provides:
 
 | | |
@@ -54,48 +82,6 @@ For every relevant job, the agent provides:
 
 ---
 
-## 📬 Example
-
-A typical daily digest might look like:
-
----
-
-### 4 new job matches
-
-**Software Developer – AI & HR Automation** — Check Point Software · fit 88  
-Qualifications cap the role at up to two years of professional experience and centre on web applications, LLM/agent work and API integrations — all directly evidenced by the candidate's React/TypeScript project, MCP and Claude Agent SDK work, and the REST-API pipeline built at IBM Research.  
-[Apply](https://www.linkedin.com/jobs/view/4452599968) · [View CV in Canva](#) · `jobs pdf 4452599968`
-
-**AI Engineer / Full Stack Developer – LLM & RAG** — recruitricks · fit 84  
-The must-haves cap experience at two years and centre on strong Python/React plus hands-on LLM API and prompt work, all of which the candidate evidences through the IBM Python pipeline, the React/TypeScript app and the MCP-based agent project; RAG and retrieval evaluation are listed only as advantages and are learnable on the job.  
-[Apply](https://www.linkedin.com/jobs/view/4454746761) · [View CV in Canva](#) · `jobs pdf 4454746761`
-
-**AI Creative Specialist** — MediaForce · fit 78  
-The posting states outright that this is a junior role and its core requirement — having actually built products and automations with AI coding tools such as Cursor and Claude Code — is exactly what the candidate did in the Job Search Agent project, with the performance-marketing and generative-media context being domain knowledge a motivated junior picks up on the job.  
-[Apply](https://www.linkedin.com/jobs/view/4452569518) · [View CV in Canva](#) · `jobs pdf 4452569518`
-
-**Full Stack Engineer — Computational Pathology Platform** — DeePathology.ai · fit 72  
-The posting says outright it suits a strong computer-science student and most of what it asks for — solid Python, Docker, Git, Linux and quantitative parsing of large structured outputs — matches the candidate's IBM pipeline work, leaving model training and image processing as the gap, which is workable because the platform supplies its own annotation and training tooling.  
-[Apply](https://www.linkedin.com/jobs/view/4452811979) · [View CV in Canva](#) · `jobs pdf 4452811979`
-
-<sub>Scanned 87 postings in the last 24h · 61 already seen · 26 judged · 4 matched</sub>
-
----
-
-One email arrives every morning whichever way the run went — matches, nothing
-over the threshold, or a failure. Silence means the scheduler itself is broken.
-
-### 📄 View a Generated CV
-
-Each match carries the posting's job ID. Pass it to `jobs pdf` to write that
-CV out under `output/<run-date>/` and open it:
-
-```bash
-jobs pdf 4452599968
-```
-
----
-
 # 🚀 Quick Start
 
 ## Requirements
@@ -105,12 +91,17 @@ jobs pdf 4452599968
   `os.startfile`. There is no macOS or Linux path today.
 - **Python 3.11+**
 - **Docker Desktop**
-- **Claude Code**, authorized on this machine. The agent runs on the Claude Agent
-  SDK, which drives the `claude` CLI — an API key on its own is not enough.
+- **Claude Code**, on `PATH`. The agent runs on the Claude Agent SDK, which drives
+  the `claude` CLI as a subprocess; without it the SDK fails with
+  `CLINotFoundError` before any work starts. The CLI is also where the Canva
+  connection below is authorized, and no API key grants that.
 - **Canva account** with an editable résumé template. Canva is reached through the
   **Canva MCP server**, not an API key: run `claude` once and approve the Canva
   connection before `jobs init`, or setup will stop at step 3.
-- **Anthropic API key**
+- **Anthropic API key**, in `.env`. It authenticates and bills the model: the CLI
+  subprocess inherits the environment and uses the key in preference to a
+  claude.ai login. `jobs setup` stops if it is missing or blank. Both this and the
+  CLI above are required — the key covers the model, the CLI covers Canva.
 - **Monid API key**
 - **Gmail account** with an app password
 
@@ -225,17 +216,20 @@ src/jobsearch/
 
 ### Core Components
 
-**🤖 Agent**  
+**🤖 [Agent](src/jobsearch/agent/README.md)**  
 Discovers jobs and evaluates candidate fit.
 
-**📄 Resume Pipeline**  
+**📄 [Resume Pipeline](src/jobsearch/resume/README.md)**  
 Creates tailored CVs from the connected Canva template.
 
 **🗄 Database**  
 Stores jobs, evaluations, runs, and generated CVs.
 
-**📬 Delivery**  
+**📬 [Delivery](src/jobsearch/delivery/README.md)**  
 Handles CLI commands and email notifications.
+
+Each package documents its own internals; [`src/jobsearch/`](src/jobsearch/README.md)
+is the entry point.
 
 ---
 
